@@ -116,7 +116,7 @@ The firewall's invariants are verified across four comprehensive benchmark suite
 1. **Automated Unit & Integration Tests**: 69 unit and integration tests covering every adapter, validator, normalizer, sandbox runtime backend, and API endpoint.
 2. **105-Scenario Standard Benchmark Suite**: 100.0% accuracy, 0.0% false allow rate.
 3. **220-Scenario Adversarial Red-Team Suite**: Rigorous bypass test suite across all 10 categories achieving **99.55% accuracy** and **0.0% high-impact false allows**.
-4. **186-Scenario Hostile Bypass Benchmark Suite**: Attacks against the mediation architecture directly (`benchmarks/firewall_bypass/`) achieving **98.39% accuracy** and **0.0% high-impact false allows**.
-5. **100-Scenario Drex Isolation & Host Escape Benchmark**: 10 attack categories (`benchmarks/isolation/`) evaluating outer OS container confinement, achieving **98.0% accuracy** and **0.0% high-impact false allows**.
+4. **186-Scenario Hostile Bypass Benchmark Suite**: Attacks against the mediation architecture directly (`drex_agent_firewall/benchmark/firewall_bypass/`) achieving **98.39% accuracy** and **0.0% high-impact false allows**.
+5. **100-Scenario Drex Isolation & Host Escape Benchmark**: 10 attack categories (`drex_agent_firewall/benchmark/isolation/`) evaluating outer OS container confinement, achieving **98.0% accuracy** and **0.0% high-impact false allows**.
 6. **Live Autonomous Agent Testing**: Claude Code v2.1.287 executing inside isolated sandbox runtime with live bait interception and verified defensive host escape confinement (100% autonomy, 0 bait leaked, test suite passing, fix committed).
 

@@ -55,4 +55,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNS-based SSRF bypasses (e.g., nip.io resolving to metadata IPs) are not detected by string-only validators
 - No seccomp profile filtering — full syscall surface remains available within the namespace
 - Transformed/encoded secret detection has inherent false-negative limitations
-- `~/.local` mounted as `/opt/agent_tools` (RO) may expose cached application data beyond binaries
+- Controlled-online agent execution requires system-installed agent binaries; no `~/.local` fallback is permitted

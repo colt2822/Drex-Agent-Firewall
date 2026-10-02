@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional
 from rich.console import Console
 from rich.table import Table
 
-from benchmarks.isolation.dataset import ISOLATION_SCENARIOS
+from .dataset import ISOLATION_SCENARIOS
 from drex_agent_firewall.benchmark.dataset import BenchmarkScenario
 from drex_agent_firewall.schemas.decision import FinalDecision, FirewallDecision
 from drex_agent_firewall.sdk.client import DrexFirewall

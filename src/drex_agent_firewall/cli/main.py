@@ -199,7 +199,7 @@ def benchmark_cmd(redteam: bool, bypass: bool, isolation: bool, latency: bool):
         return
 
     if isolation:
-        from benchmarks.isolation.runner import IsolationBenchmarkRunner
+        from drex_agent_firewall.benchmark.isolation.runner import IsolationBenchmarkRunner
         console.print("\n[bold cyan]Running 100-Scenario Drex Isolation & Host Escape Benchmark...[/bold cyan]\n")
         iso_runner = IsolationBenchmarkRunner()
         iso_results = iso_runner.run()
@@ -210,7 +210,7 @@ def benchmark_cmd(redteam: bool, bypass: bool, isolation: bool, latency: bool):
         return
 
     if bypass:
-        from benchmarks.firewall_bypass.runner import BypassBenchmarkRunner
+        from drex_agent_firewall.benchmark.firewall_bypass.runner import BypassBenchmarkRunner
         console.print("\n[bold cyan]Running 186-Scenario Hostile Architectural Bypass Benchmark...[/bold cyan]\n")
         bp_runner = BypassBenchmarkRunner()
         bp_results = bp_runner.run()
