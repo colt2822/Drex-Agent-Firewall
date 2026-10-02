@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 from drex_agent_firewall.adapters.base import BaseAdapter
 from drex_agent_firewall.constraints.enforcer import ConstraintEnforcer, ConstraintViolation
+from drex_agent_firewall.security.environment import filter_environment
 from drex_agent_firewall.schemas.decision import FirewallDecision
 from drex_agent_firewall.utils.process_io import bounded_communicate
 
@@ -130,9 +131,9 @@ class ShellAdapter(BaseAdapter):
         max_bytes = decision.constraints.max_output_bytes or (1024 * 1024)
 
         # Prepare sanitized runtime environment
-        exec_env = os.environ.copy()
+        exec_env = filter_environment(os.environ)
         if env:
-            exec_env.update(env)
+            exec_env.update(filter_environment(env))
 
         # 4. Guarded Subprocess Execution
         start_t = time.perf_counter()

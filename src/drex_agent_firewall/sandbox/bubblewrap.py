@@ -22,45 +22,13 @@ from drex_agent_firewall.sandbox.backend import (
     SandboxSpec,
     SandboxStatus,
 )
+from drex_agent_firewall.security.environment import is_sensitive_environment_name as _blocked_environment_name
 from drex_agent_firewall.utils.process_io import bounded_communicate
 
 logger = logging.getLogger(__name__)
 
 _SENSITIVE_AUTH_KEY = re.compile(r"(?i)(token|secret|api.?key|password|cookie|account)")
 _PROXY_LAUNCHER = "/opt/drex-firewall/src/drex_agent_firewall/sandbox/proxy_launcher.py"
-
-BLOCKED_SENSITIVE_ENV_PREFIXES = (
-    "GITHUB_",
-    "GH_",
-    "AWS_",
-    "OPENAI_",
-    "ANTHROPIC_",
-    "GOOGLE_",
-    "GEMINI_",
-    "DREX_",
-    "SSH_",
-    "SLACK_",
-)
-
-BLOCKED_SENSITIVE_ENV_EXACT = {
-    "SSH_AUTH_SOCK",
-    "SSH_AGENT_PID",
-    "HTTP_PROXY",
-    "HTTPS_PROXY",
-    "ALL_PROXY",
-    "NO_PROXY",
-    "FTP_PROXY",
-    "GIT_ASKPASS",
-    "GIT_TERMINAL_PROMPT",
-}
-
-
-def _blocked_environment_name(name: str) -> bool:
-    normalized = name.upper()
-    return normalized in BLOCKED_SENSITIVE_ENV_EXACT or any(
-        normalized.startswith(prefix) for prefix in BLOCKED_SENSITIVE_ENV_PREFIXES
-    )
-
 
 class BubblewrapBackend(IsolationBackend):
     """Bubblewrap (bwrap) unprivileged rootless container isolation backend.

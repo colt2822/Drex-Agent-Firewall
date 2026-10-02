@@ -16,6 +16,7 @@ from drex_agent_firewall.sandbox.backend import (
     SandboxSpec,
     SandboxStatus,
 )
+from drex_agent_firewall.security.environment import is_sensitive_environment_name
 from drex_agent_firewall.utils.process_io import bounded_communicate
 
 logger = logging.getLogger(__name__)
@@ -143,7 +144,8 @@ class ContainerCLIBackend(IsolationBackend):
             exec_args.extend(["-w", cwd])
         if env:
             for k, v in env.items():
-                exec_args.extend(["-e", f"{k}={v}"])
+                if not is_sensitive_environment_name(k):
+                    exec_args.extend(["-e", f"{k}={v}"])
 
         exec_args.append(c_name)
         exec_args.extend(command)

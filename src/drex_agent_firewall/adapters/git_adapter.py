@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from drex_agent_firewall.adapters.base import BaseAdapter
 from drex_agent_firewall.constraints.enforcer import ConstraintEnforcer, ConstraintViolation
+from drex_agent_firewall.security.environment import filter_environment
 from drex_agent_firewall.schemas.decision import FirewallDecision
 from drex_agent_firewall.utils.process_io import bounded_communicate
 
@@ -156,6 +157,7 @@ class GitAdapter(BaseAdapter):
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                env=filter_environment(os.environ),
             )
             captured = bounded_communicate(
                 proc,
