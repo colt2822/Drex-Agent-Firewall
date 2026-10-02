@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **220-Scenario Adversarial Red-Team Benchmark**: 99.55% accuracy, 0 high-impact false allows
 - **186-Scenario Hostile Bypass Benchmark**: 98.39% accuracy, 0 high-impact false allows
 - **MCP Firewall Proxy**: JSON-RPC 2.0 stdio proxy intercepting tools/call, resources/read, resources/write
+- **Guarded Adapters**: shell, filesystem, Git, GitHub, HTTP, and MCP proxy integrations
+- **Controlled Online Mode**: Bubblewrap network isolation with an exact-host CONNECT broker for supported Claude and Codex calls
+- **Prometheus Metrics & Web UI**: FastAPI service metrics and real-time dashboard
+- **Codex Runtime Validation**: CLI launch, controlled-online authentication handling, cleanup, and provider-host policy are covered by sandbox tests; no successful live Codex coding-task result is claimed
 - **6 Reusable Policy Packs**: safe-local-coding, github-contributor, read-only-research, autonomous-ci, production-ops, paranoid
 - **Policy Simulator**: Compare audit traces across all policy packs without side effects
 - **Calibration & Latency Benchmarks**: Brier score, ECE, risk-outcome correlation, P50/P95/P99 latency profiling
@@ -33,7 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Secret Redactor**: Automatic scrubbing of API keys, tokens, private keys, URL credentials
 
 ### Security Hardening (v0.1.0-rc)
-- Removed all hardcoded personal paths (`/path/to/workspace/...`)
+- Removed hardcoded developer-specific absolute paths from shipped examples
 - Narrowed `/etc` mount from full directory to selective required files only (SSL certs, resolv.conf, ld.so, etc.)
 - Made credential injection opt-in per agent_type with explicit logging
 - Fixed network isolation to always unshare-net for `allowlisted` mode (veth/iptables not yet implemented; network is fully isolated)

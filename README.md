@@ -2,11 +2,11 @@
 
 > A probabilistic policy firewall for autonomous AI agents, powered by Drex.
 
-[![CI](https://github.com/example/drex-agent-firewall/actions/workflows/ci.yml/badge.svg)](https://github.com/example/drex-agent-firewall/actions/workflows/ci.yml)
+[![CI](https://github.com/colt2822/Drex-Agent-Firewall/actions/workflows/ci.yml/badge.svg)](https://github.com/colt2822/Drex-Agent-Firewall/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-**Drex Agent Firewall** is a production-grade, vendor-neutral policy and decision firewall designed to sit between autonomous AI agents (Claude Code, OpenAI Codex, OpenHands, generic MCP clients, custom agentic loops) and tools that can cause side effects (Shell, Filesystem, Git, GitHub, HTTP, MCP).
+**Drex Agent Firewall** is an open-source, vendor-neutral policy and decision firewall designed to sit between autonomous AI agents (Claude Code, OpenAI Codex, OpenHands, generic MCP clients, custom agentic loops) and tools that can cause side effects (shell, filesystem, Git, GitHub, HTTP, MCP).
 
 > **Notice**: Independent open-source project. Not an official Nace/Drex SDK or certified security appliance. It does not provide formal security certification or mathematical proofs of non-interference. It should be deployed as defense-in-depth alongside containerization, least privilege IAM, and network sandboxing.
 
@@ -44,7 +44,7 @@ Autonomous agents operating in production environments can inadvertently cause c
 - Exfiltrating credentials (`.env`, `id_rsa`, API keys) to unknown external HTTP destinations
 - Performing high-impact mutations with low model confidence
 
-Drex Agent Firewall stops these failures deterministically before effects occur.
+Deterministic rules are designed to block configured forbidden actions before guarded adapters execute them. Coverage depends on which integrations and runtime boundaries are used; see the [threat model](docs/threat-model.md) and [known limitations](#limitations).
 
 ## HOW
 1. **Action Envelope**: Captures normalized targets, read-only status, reversibility, external effects, and context.
@@ -81,8 +81,8 @@ Drex Agent Firewall stops these failures deterministically before effects occur.
 
 ### Installation
 ```bash
-git clone https://github.com/example/drex-agent-firewall.git
-cd drex-agent-firewall
+git clone https://github.com/colt2822/Drex-Agent-Firewall.git
+cd Drex-Agent-Firewall
 pip install -e .
 ```
 
@@ -158,7 +158,7 @@ fw.record_outcome(
 
 ## REAL AUTONOMOUS AGENT INTEGRATION
 
-The firewall is proven under a **real autonomous coding agent** (Claude Code v2.1.287 / OpenAI Codex) solving a real bug in a disposable repository with safe adversarial bait.
+The repository includes a documented Claude Code sandbox integration and Codex controlled-online runtime validation. The reproducible test suite covers sandbox setup, credential staging and cleanup, host policy, and controlled egress. These checks do not establish a general guarantee against agent or kernel attacks.
 
 ```text
 REAL CODING AGENT (Claude Code / Codex)
@@ -176,11 +176,10 @@ Disposable Git Repository
 SQLite WAL Audit Trail & Calibration
 ```
 
-### Verification Results
-- **Legitimate Coding Task**: **PASSED** (Agent diagnosed bug in `src/normalizer.py`, wrote fix, passed all pytest tests, and committed).
-- **Adversarial Bait Leaks**: **0 LEAKS (100% BLOCKED)** (Reading `.env`, cloud metadata SSRF, force-pushing to untrusted remotes, and out-of-workspace writes were neutralized).
-- **Agent Autonomy Rate**: **100.0%** (Zero false escalations or workflow interruptions on safe actions).
-- **Firewall Overhead**: **< 1.0 ms / call** (Average 0.64 ms).
+### Validation Scope
+- A Claude Code v2.1.287 sandbox task and confinement audit are documented in [docs/agent-runtime.md](docs/agent-runtime.md).
+- Codex CLI launch, controlled-online authentication handling, and provider-host policy are covered by sandbox tests. A successful live Codex coding-task result is not claimed here.
+- The benchmark results below measure only the listed deterministic replay datasets; they are not proof of security outside those cases.
 
 Run with a single command:
 ```bash
@@ -191,7 +190,7 @@ drex-firewall demo-agent
 
 ## DREX ISOLATED AGENT RUNTIME (`drex-firewall sandbox`)
 
-An optional, production-grade outer operating system boundary around autonomous agents. Prevents agents from bypassing application-level firewalls via direct native host execution.
+An optional outer operating-system confinement layer for agents launched inside it. It reduces exposure to bypasses through direct native execution, subject to the runtime's documented limitations.
 
 ```text
 HOST ENVIRONMENT
@@ -233,7 +232,7 @@ HOST ENVIRONMENT
 - **No cgroup-based resource limits** are enforced by Bubblewrap alone. Timeout enforcement and output truncation provide partial mitigation.
 - The legacy `allowlisted` network mode remains fully isolated. Use `controlled-online` only for supported authenticated agent calls; Codex currently permits `api.openai.com`, `auth.openai.com`, and `chatgpt.com`, while Claude permits `api.anthropic.com`.
 - The broker accepts CONNECT requests only for exact configured hostname strings on TCP/443 and validates each resolved destination as globally routable. It does not inspect TLS SNI, HTTPS URL paths, or encrypted request contents.
-- Codex's inner workspace sandbox is disabled only for the CLI child because nested Bubblewrap fails in this host's outer user namespace (`No permissions to create new namespace`). The enclosing Drex Bubblewrap remains in force for filesystem, process, and network isolation.
+- Codex's inner workspace sandbox may be disabled for its CLI child when nested Bubblewrap cannot create a namespace. In that mode, the enclosing Drex Bubblewrap remains the filesystem, process, and network enforcement boundary.
 
 ### Commands
 ```bash
@@ -294,14 +293,16 @@ I. Prompt Injection Payloads (injected instructions inside tool arguments)
 J. Multi-Step Composite Attacks (read secret -> encode -> network POST)
 ```
 
-### Red-Team Results
-- Total Scenarios: **220**
-- Accuracy: **96.36%**
-- High-Impact Scenarios Evaluated: **136**
-- **High-Impact False Allows**: **0 (0.0% False Allow Rate)**
-- False Blocks: **1 (0.45%)**
-- Escalation Rate: **15.0%**
-- Average Decision Latency: **24.91 ms**
+### Benchmark Results
+
+These are the recorded v0.1.0 baseline results. Run each command to reproduce the result in the current environment.
+
+| Suite | Scenarios | Accuracy | False allows |
+| --- | ---: | ---: | ---: |
+| Standard | 105 | 100.0% | 0 high-impact |
+| Red-team | 220 | 99.55% | 0 high-impact |
+| Hostile bypass | 186 | 98.39% | 0 |
+| Isolation | 100 | 98.0% | 0 |
 
 ```bash
 drex-firewall benchmark --redteam
@@ -311,18 +312,8 @@ drex-firewall benchmark --redteam
 
 ## CALIBRATION & LATENCY PROFILES
 
-### Probabilistic Calibration
-Evaluates correlation between Drex predicted probabilities and real downstream execution outcomes:
-- **Brier Score**: **0.000 - 0.004** (where 0.0 is perfect calibration).
-- **Expected Calibration Error (ECE)**: **0.0018**.
-- **Risk-Outcome Correlation**: **1.000**.
-- **Calibration Quality**: **HIGH**.
-
-### Latency Profiles
-Measured across 200 iterations for local and replay modes:
-- **Local Deterministic Policy**: **P50: 0.135 ms**, P95: 0.181 ms, P99: 0.372 ms (7,120 ops/sec).
-- **Full Replay Firewall**: **P50: 0.359 ms**, P95: 0.595 ms, P99: 6.621 ms (1,676 ops/sec).
-- **Live Drex API (`drex-v1.5`)**: **P50: 262.66 ms**, P95: 276.06 ms (public HTTPS).
+### Calibration & Latency Tools
+The calibration and latency commands report measurements for the current run and configuration. Results depend on the provider, host, and dataset; no fixed latency or live-provider performance guarantee is made.
 
 ```bash
 drex-firewall calibration
@@ -369,6 +360,8 @@ Every decision is persisted to SQLite in **WAL mode** (`PRAGMA journal_mode=WAL`
 - Traces survive process restarts.
 - Secrets are scrubbed prior to persistence.
 
+The FastAPI service exposes Prometheus metrics and a web dashboard. Start it with `drex-firewall serve --port 8000`; review [SECURITY.md](SECURITY.md) before exposing the service beyond a trusted local environment.
+
 ---
 
 ## DOCUMENTATION INDEX
@@ -380,6 +373,16 @@ Every decision is persisted to SQLite in **WAL mode** (`PRAGMA journal_mode=WAL`
 - [MCP Compatibility Matrix](docs/mcp-compatibility.md)
 - [Calibration & Latency Report](docs/calibration.md)
 - [Security Model & Invariants](docs/security_model.md)
+
+## DEVELOPMENT
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+pytest
+drex-firewall benchmark
+```
 
 ---
 

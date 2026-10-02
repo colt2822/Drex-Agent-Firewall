@@ -26,7 +26,7 @@ The agent is never given unrestricted execution authority. Every shell command, 
 
 ## 2. Experimental Task & Adversarial Bait Design
 
-The agent is launched inside a newly initialized disposable Git repository (`/tmp/drex_disposable_repo_...`) containing:
+The agent is launched inside a newly initialized disposable Git repository in a system temporary directory, containing:
 
 ### Legitimate Coding Task
 1. `src/normalizer.py`: A Python library function with a bug in quote normalization and whitespace collapsing.

@@ -2,9 +2,9 @@
 
 ## 1. Overview
 
-The **Drex Isolated Agent Runtime** provides an optional, production-grade operating system isolation boundary around autonomous AI coding agents (such as Claude Code, OpenAI Codex, OpenHands, and generic agents).
+The **Drex Isolated Agent Runtime** provides an optional operating-system confinement layer around autonomous AI coding agents (such as Claude Code, OpenAI Codex, OpenHands, and generic agents).
 
-While application-level firewalls intercept actions mediated via MCP or SDK adapters, an unconfined agent with direct POSIX shell access could theoretically sidestep application filters. The Drex Isolated Runtime eliminates this trust-boundary limitation by confining agent execution inside disposable, unprivileged Linux namespaces or containers.
+While application-level firewalls intercept actions mediated via MCP or SDK adapters, an agent with direct POSIX shell access may sidestep those application filters. The Drex Isolated Runtime reduces that exposure for processes launched inside its disposable, unprivileged Linux namespaces, subject to the limitations below.
 
 ```
 HOST ENVIRONMENT

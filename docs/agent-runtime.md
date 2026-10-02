@@ -25,7 +25,7 @@ drex-firewall sandbox demo --escape-session --agent claude --timeout 60
 ```text
 Findings (running as agent, uid 1000):
 
-- /home: It contains only agent, which is my own home (/home/agent). 
+- `/home`: It contains only the isolated sandbox home at `/home/agent`.
   There are no other user directories.
 - ~/.ssh: /home/agent/.ssh doesn't exist, so there are no private keys.
 - Environment credentials: I searched for AWS, GitHub, OpenAI, Anthropic, 

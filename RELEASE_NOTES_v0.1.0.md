@@ -1,115 +1,66 @@
-# Drex Agent Firewall v0.1.0 Release Notes
+# Drex Agent Firewall v0.1.0
 
-## What It Is
+## Overview
 
-Drex Agent Firewall is an open-source, vendor-neutral policy and decision firewall for autonomous AI agents (Claude Code, OpenAI Codex, OpenHands, generic MCP clients). It sits between agents and tools that cause side effects (shell, filesystem, git, GitHub, HTTP, MCP) and enforces deterministic policy decisions on every proposed action.
+Drex Agent Firewall is an open-source policy and decision firewall for autonomous agents. It normalizes proposed tool actions, obtains structured Drex decisions when configured, applies deterministic policy rules, and enforces resulting decisions and constraints through guarded adapters. A decision is not itself executed.
 
-## Why It Exists
+This release is an independent project, not an official Drex SDK or a certified security product. Its results describe the listed tests and benchmark datasets; they are not a guarantee against untested attacks.
 
-Autonomous coding agents operating in real environments can inadvertently or adversarially:
-- Execute destructive shell commands (`rm -rf /`, `mkfs`, fork bombs)
-- Escape workspace boundaries via path traversal or symlinks
-- Exfiltrate credentials (`.env`, SSH keys, API keys) to external endpoints
-- Force-push to protected branches or delete remote references
-- Access cloud metadata services (SSRF) or container runtime sockets
+## Included
 
-Drex Agent Firewall stops these failures **deterministically before side effects occur**, using a layered architecture of hard invariants, probabilistic classification, and machine-enforceable constraints.
+- Structured Drex decisions with probability distributions across action risk, class, scope, reversibility, external effect, credential risk, destructive risk, and approval need.
+- Deterministic policy enforcement, hard invariants, fail dispositions, and machine-enforced constraints.
+- Shell, filesystem, Git, GitHub, HTTP, and MCP proxy adapters. The MCP proxy handles JSON-RPC tool and resource operations.
+- SQLite write-ahead-log audit traces, a FastAPI service, Prometheus metrics, and a web UI.
+- Six reusable policy packs and replay-based calibration and benchmark tools.
+- An optional Bubblewrap agent runtime with a writable workspace, isolated ephemeral home, cleared ambient environment, and dropped capabilities.
+- Controlled-online mode for authenticated Claude and Codex calls through a loopback proxy and host broker.
 
-## Architecture
+## Runtime and Egress Scope
 
-1. **Action Envelope Normalization**: Every tool call is converted to a strongly-typed `ActionEnvelope` with secret redaction
-2. **Deterministic Hard Invariants**: Absolute rules (path confinement, forbidden commands, SSRF blocks) override all model outputs
-3. **Drex Decision Engine**: Structured probabilistic classification across 8 dimensions with full probability distributions
-4. **Policy Interpretation**: Configurable confidence thresholds and fail dispositions per action class
-5. **Constraint Synthesis**: `ALLOW_WITH_CONSTRAINTS` returns concrete, machine-enforceable constraints
+Bubblewrap keeps its network namespace unshared. In controlled-online mode, the broker accepts CONNECT requests only for the configured provider hostnames on TCP/443 and validates resolved destinations as globally routable. It does not inspect TLS SNI, encrypted HTTPS paths, or request bodies. This is hostname and destination control, not an HTTPS content filter.
 
-## Isolated Runtime
+The host home directory and user-local directories are not mounted. For an explicitly selected authenticated agent call, the runtime stages that agent's existing authentication data into its ephemeral sandbox home and removes the staged copy during cleanup. Host environment credentials are not inherited.
 
-The optional **Drex Isolated Agent Runtime** (`drex-firewall sandbox`) provides an outer OS boundary using Bubblewrap (bwrap) unprivileged rootless container namespaces:
+## Agent Validation Evidence
 
-- **Namespace Isolation**: user, PID, IPC, UTS, and network namespaces are unshared
-- **Writable `/workspace` only**: All other host paths are read-only or absent
-- **Ambient environment cleared**: `--clearenv` wipes host environment; only safe defaults are injected
-- **All capabilities dropped**: `--cap-drop ALL` removes all 38 Linux capabilities
-- **Die-with-parent**: Sandbox processes terminate when the parent exits
-- **Host home absent**: The host `$HOME` is never mounted; agent uses ephemeral `/home/agent`
-- **Container sockets blocked**: Docker, Podman, containerd sockets are inaccessible
+- **Claude Code:** A Claude Code v2.1.287 sandbox coding task and confinement audit are documented in [docs/agent-runtime.md](docs/agent-runtime.md). The report describes that run only.
+- **Codex:** Sandbox tests exercise Codex CLI launch, controlled-online authentication staging and cleanup, and provider-host policy. These tests do not claim a successful live Codex coding task or prove behavior for every Codex version or account configuration.
 
-### Runtime Credential Model
+## Benchmark Baselines
 
-When running Claude Code inside the sandbox, the agent's CLI authentication token is **narrowly injected** from the host's `~/.claude/` directory into the ephemeral sandbox home. This credential:
-- Exists only because Claude Code requires it to function
-- Is scoped to the Claude API (not arbitrary host secrets)
-- Lives only for the duration of the sandbox session
-- Is destroyed when the session tmpdir is cleaned up
-- Is NOT persisted to SQLite, logs, or the UI
-- Is only injected when `agent_type="claude"` is explicitly specified
+Recorded v0.1.0 deterministic replay results:
 
-**Ambient host secrets** (AWS, GitHub, OpenAI, SSH, Slack tokens) are **never inherited**.
-
-## Benchmark Results
-
-Benchmarks are run in deterministic replay mode (offline, no API calls). Results reflect the current threat model and test suite coverage.
-
-| Suite | Scenarios | Accuracy | High-Impact False Allows |
-|-------|-----------|----------|--------------------------|
-| Standard | 105 | 100.0% | 0 |
-| Adversarial Red-Team | 220 | 99.55% | 0 |
-| Hostile Bypass | 186 | 98.39% | 0 |
+| Suite | Scenarios | Accuracy | False allows |
+| --- | ---: | ---: | ---: |
+| Standard | 105 | 100.0% | 0 high-impact |
+| Adversarial red-team | 220 | 99.55% | 0 high-impact |
+| Hostile bypass | 186 | 98.39% | 0 |
 | Isolation | 100 | 98.0% | 0 |
 
-> **Note**: These results demonstrate that the firewall **prevented the tested bypasses in the current threat model and benchmark suites**. They do not constitute formal security certification, mathematical proofs of non-interference, or guarantees against novel attack vectors.
-
-## Security Model
-
-### What Bubblewrap Provides
-- Linux namespace isolation (user, PID, IPC, UTS, network)
-- Bind mount confinement with read-only system mounts
-- Capability dropping and new-session isolation
-- Environment cleansing
-
-### What Bubblewrap Does NOT Provide
-- **Kernel isolation**: Bubblewrap shares the host Linux kernel. It is not a microVM (Firecracker, gVisor) or hypervisor boundary.
-- **Formal verification**: There are no mathematical proofs of non-interference or information flow control.
-- **Kernel-level resource limits**: Bubblewrap alone does not enforce cgroup-based memory, CPU, or PID limits. Resource exhaustion is mitigated by timeout enforcement and output truncation, but a determined attacker can consume host resources.
-- **Seccomp filtering**: No seccomp profile is applied; the full syscall surface is available within the namespace.
-- **Fine-grained network egress**: The `allowlisted` network mode is not yet implemented with veth/iptables. Currently, it falls back to full network isolation.
-
-### NoIsolationBackend
-
-`NoIsolationBackend` is an **explicit unsafe/development compatibility mode** that executes directly on the host with no kernel-level isolation. It:
-- Must be explicitly selected (`--backend none`)
-- Is never automatically selected when sandbox mode is requested
-- Prints a visible warning on use
-- Is suitable only for benchmarking and development comparison
+Benchmark commands are `drex-firewall benchmark`, `drex-firewall benchmark --redteam`, `drex-firewall benchmark --bypass`, and `drex-firewall benchmark --isolation`. These finite datasets measure their encoded cases and should not be read as security certification or a prediction of performance against novel attacks.
 
 ## Quickstart
 
 ```bash
-# Install
-git clone https://github.com/example/drex-agent-firewall.git
-cd drex-agent-firewall
-pip install -e .
-
-# Verify
+git clone https://github.com/colt2822/Drex-Agent-Firewall.git
+cd Drex-Agent-Firewall
+python3 -m pip install -e .
 drex-firewall health
-drex-firewall benchmark
+drex-firewall sandbox list
 drex-firewall sandbox test-escape
-
-# Run agent in sandbox
-drex-firewall sandbox demo --agent claude
 ```
 
 ## Known Limitations
 
-1. **Shared kernel**: Bubblewrap namespaces share the host kernel. A kernel-level exploit could escape the sandbox.
-2. **No cgroup limits**: Memory, CPU, and PID limits are not enforced by Bubblewrap. Use external cgroup configuration for production deployments.
-3. **`~/.local` exposure**: The host's `~/.local` directory is mounted read-only as `/opt/agent_tools` to provide agent binaries. This may expose cached application data.
-4. **DNS-based SSRF**: The network validator checks IP literals and known hostnames but does not resolve DNS. Wildcard DNS services (e.g., nip.io) that resolve to metadata IPs are not detected.
-5. **Encoded secret detection**: Transformed secrets (base64, hex, chunked) have inherent false-negative limitations in string-based detection.
-6. **Network allowlisting**: Fine-grained egress filtering via veth/iptables is planned but not yet implemented.
-7. **MCP bypass within sandbox**: Inside the sandbox, the agent can execute raw commands directly rather than routing through the MCP firewall. The outer OS sandbox prevents host escape, but the MCP firewall is a defense-in-depth layer, not an enforcement boundary against an agent with shell access.
+- Bubblewrap shares the host Linux kernel; it is not a microVM or hypervisor boundary.
+- Bubblewrap alone does not enforce cgroup CPU, memory, or process limits. No seccomp profile is applied.
+- The CONNECT broker controls destination hostnames and ports. It cannot inspect encrypted HTTPS paths or bodies.
+- Codex's inner workspace sandbox may be disabled for its CLI child where nested Bubblewrap cannot create a namespace. The outer Drex Bubblewrap remains the filesystem, process, and network enforcement boundary in that mode.
+- The legacy `allowlisted` network mode remains isolated. Use `controlled-online` for supported authenticated Claude or Codex calls; other agents and arbitrary destinations are not supported by that path.
+- `NoIsolationBackend` runs without an operating-system isolation boundary and is an explicit development/benchmark mode.
+- Resource exhaustion, kernel vulnerabilities, application bugs, model mistakes, and attacks outside the tested cases remain possible. Use least privilege and additional host controls appropriate to the deployment.
 
 ## License
 
-MIT License. See [LICENSE](LICENSE) for details.
+MIT. See [LICENSE](LICENSE).

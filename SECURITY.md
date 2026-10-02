@@ -11,14 +11,14 @@
 If you discover a security vulnerability in Drex Agent Firewall, please report it responsibly:
 
 1. **Do not open a public GitHub issue.**
-2. Send an email to the security maintainers at `security@drex-agent-firewall.local` (or submit a private security advisory on GitHub).
-3. Include details regarding:
+2. Use GitHub's private vulnerability reporting feature for this repository if it is enabled. If it is unavailable, contact the maintainers privately through the contact options on their GitHub profiles.
+3. Include, without sharing live credentials or personal data:
    - The type of vulnerability (e.g., path traversal bypass, secret leak, prompt injection causing policy bypass)
    - Step-by-step reproduction instructions or code
    - Environment and version details
    - Potential impact
 
-We will acknowledge receipt within 48 hours and work with you on a coordinated disclosure schedule.
+The maintainers will assess reports and coordinate any disclosure with the reporter. No response-time commitment is currently published.
 
 ## Defense-in-Depth Model
 

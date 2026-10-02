@@ -6,8 +6,8 @@ Thank you for your interest in contributing to Drex Agent Firewall!
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/example/drex-agent-firewall.git
-   cd drex-agent-firewall
+   git clone https://github.com/colt2822/Drex-Agent-Firewall.git
+   cd Drex-Agent-Firewall
    ```
 
 2. Create a virtual environment and install in editable mode with development dependencies:
