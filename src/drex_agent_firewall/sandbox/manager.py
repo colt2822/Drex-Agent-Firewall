@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import tempfile
 import time
 import uuid
 from typing import Any, Dict, List, Optional
@@ -47,6 +48,7 @@ class SandboxManager:
         self.db_path = db_path
         self.repository = repository or ActionRepository(db_path=db_path)
         self.backend: IsolationBackend = get_isolation_backend(backend_type)
+        self._mcp_config_paths: Dict[str, str] = {}
 
     def create_session(
         self,
@@ -79,6 +81,7 @@ class SandboxManager:
 
         # Generate Drex MCP configuration inside workspace if not present
         mcp_cfg_path = self._generate_mcp_config(abs_workspace, policy_pack, sid, agent_type)
+        self._mcp_config_paths[sid] = mcp_cfg_path
 
         spec = SandboxSpec(
             session_id=sid,
@@ -120,6 +123,7 @@ class SandboxManager:
             return info
 
         except Exception as e:
+            self._remove_mcp_config(sid)
             # Record failure in repository (fail-closed)
             self.repository.record_sandbox_session(
                 session_id=sid,
@@ -140,7 +144,7 @@ class SandboxManager:
         session_id: str,
         agent_type: str,
     ) -> str:
-        """Write drex_mcp_config.json in workspace to direct agent tools through Drex MCP server."""
+        """Create an exclusive, private MCP config file inside the workspace."""
         mcp_cfg = {
             "mcpServers": {
                 "drex_firewall": {
@@ -163,10 +167,31 @@ class SandboxManager:
                 }
             }
         }
-        cfg_file = os.path.join(workspace_path, ".drex_mcp_config.json")
-        with open(cfg_file, "w") as f:
-            json.dump(mcp_cfg, f, indent=2)
+        fd, cfg_file = tempfile.mkstemp(
+            prefix=".drex_mcp_config-",
+            suffix=".json",
+            dir=workspace_path,
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(mcp_cfg, f, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+        except Exception:
+            try:
+                os.unlink(cfg_file)
+            except OSError:
+                pass
+            raise
         return cfg_file
+
+    def _remove_mcp_config(self, session_id: str) -> None:
+        path = self._mcp_config_paths.pop(session_id, None)
+        if path:
+            try:
+                os.unlink(path)
+            except FileNotFoundError:
+                pass
 
     def run_agent(
         self,
@@ -185,6 +210,13 @@ class SandboxManager:
 
         # Determine agent command vector
         if agent_type in ("claude", "codex"):
+            metadata = sess_record.get("metadata_json", {}) if sess_record else {}
+            mcp_config_path = self._mcp_config_paths.get(session_id) or (
+                metadata.get("mcp_config_path") if isinstance(metadata, dict) else None
+            )
+            if not mcp_config_path or not os.path.isfile(mcp_config_path):
+                raise RuntimeError("Drex MCP configuration is missing; refusing to launch the agent without firewall tools")
+            guest_mcp_config_path = os.path.join("/workspace", os.path.basename(mcp_config_path))
             network_mode = sess_record.get("network_mode", "firewall-only") if sess_record else "firewall-only"
             if network_mode != "controlled-online":
                 raise RuntimeError(
@@ -201,8 +233,12 @@ class SandboxManager:
                     "-p",
                     prompt,
                     "--dangerously-skip-permissions",
+                    "--mcp-config",
+                    guest_mcp_config_path,
+                    "--strict-mcp-config",
                 ]
             else:
+                mcp_server = self._load_mcp_server_config(mcp_config_path)
                 cmd = [
                     "/usr/bin/codex",
                     "exec",
@@ -214,6 +250,12 @@ class SandboxManager:
                     # "No permissions to create new namespace". The outer
                     # Bubblewrap boundary remains active around this process.
                     "--dangerously-bypass-approvals-and-sandbox",
+                    "-c",
+                    f'mcp_servers.drex_firewall.command={json.dumps(mcp_server["command"])}',
+                    "-c",
+                    f'mcp_servers.drex_firewall.args={json.dumps(mcp_server["args"])}',
+                    "-c",
+                    f'mcp_servers.drex_firewall.env={self._toml_inline_table(mcp_server.get("env", {}))}',
                     prompt,
                 ]
             return exec_agent(session_id, cmd, timeout=timeout)
@@ -221,6 +263,27 @@ class SandboxManager:
             cmd = ["bash", "-c", prompt]
             res = self.exec_command(session_id, cmd, timeout=timeout)
             return res
+
+    @staticmethod
+    def _load_mcp_server_config(config_path: str) -> Dict[str, Any]:
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            server = config["mcpServers"]["drex_firewall"]
+            if not isinstance(server.get("command"), str) or not isinstance(server.get("args"), list):
+                raise ValueError("invalid Drex MCP server declaration")
+            return server
+        except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
+            raise RuntimeError("Drex MCP configuration is invalid; refusing unguarded agent launch") from exc
+
+    @staticmethod
+    def _toml_inline_table(value: Dict[str, Any]) -> str:
+        pairs = []
+        for key, item in value.items():
+            if not isinstance(key, str) or not isinstance(item, str):
+                raise RuntimeError("Drex MCP environment must contain string keys and values")
+            pairs.append(f"{json.dumps(key)} = {json.dumps(item)}")
+        return "{ " + ", ".join(pairs) + " }"
 
     def exec_command(
         self,
@@ -265,4 +328,5 @@ class SandboxManager:
         ok = self.backend.destroy(session_id)
         if ok:
             self.repository.update_sandbox_session(session_id=session_id, status="DESTROYED")
+            self._remove_mcp_config(session_id)
         return ok
