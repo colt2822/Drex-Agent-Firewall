@@ -22,6 +22,7 @@ class ActionEnvelope(BaseModel):
     parent_action_id: Optional[str] = None
     agent_id: str = Field(default="agent")
     session_id: str = Field(default="session-default")
+    sandbox_session_id: Optional[str] = Field(default=None, description="Correlated isolated sandbox session ID")
 
     # Action definition
     tool: str = Field(description="Tool being targeted (e.g. shell, filesystem, git, github, http, mcp)")

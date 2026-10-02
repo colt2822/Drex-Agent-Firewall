@@ -60,13 +60,13 @@ class ActionRepository:
                 """
                 INSERT OR REPLACE INTO audit_actions (
                     action_id, trace_id, parent_action_id, timestamp,
-                    agent, session_id, tool, operation,
+                    agent, session_id, sandbox_session_id, tool, operation,
                     normalized_target, arguments_json, requested_model,
                     resolved_model, provider, decision_type, final_decision,
                     allowed, reason, hard_policy_triggered, policy_rule,
                     confidence, full_probability_distribution, constraints_json,
                     latency_ms, provider_latency_ms, error_class, failure_disposition
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     decision.action_id,
@@ -75,6 +75,7 @@ class ActionRepository:
                     decision.timestamp,
                     envelope.agent_id,
                     envelope.session_id,
+                    envelope.sandbox_session_id,
                     envelope.tool,
                     envelope.operation,
                     clean_target,
@@ -242,10 +243,133 @@ class ActionRepository:
         cols = [col[0] for col in cursor.description]
         d = dict(zip(cols, row))
         # Parse JSON columns if present
-        for col in ("arguments_json", "full_probability_distribution", "constraints_json"):
+        for col in ("arguments_json", "full_probability_distribution", "constraints_json", "metadata_json"):
             if d.get(col):
                 try:
                     d[col] = json.loads(d[col])
                 except Exception:
                     pass
         return d
+
+    def record_sandbox_session(
+        self,
+        session_id: str,
+        runtime_backend: str,
+        workspace_path: str,
+        network_mode: str,
+        status: str = "RUNNING",
+        agent: Optional[str] = None,
+        policy_pack: Optional[str] = None,
+        runtime_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Record the creation/start of an isolated sandbox session."""
+        now = time.time()
+        meta_json = json.dumps(metadata) if metadata else None
+        with self._lock:
+            with self.conn:
+                self.conn.execute(
+                    """
+                    INSERT OR REPLACE INTO sandbox_sessions (
+                        session_id, runtime_backend, runtime_id, agent,
+                        policy_pack, workspace_path, network_mode, status,
+                        created_at, metadata_json
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        session_id, runtime_backend, runtime_id, agent,
+                        policy_pack, workspace_path, network_mode, status,
+                        now, meta_json
+                    )
+                )
+
+    def update_sandbox_session(
+        self,
+        session_id: str,
+        status: Optional[str] = None,
+        duration_seconds: Optional[float] = None,
+        total_actions: Optional[int] = None,
+        allowed_actions: Optional[int] = None,
+        blocked_actions: Optional[int] = None,
+        escalated_actions: Optional[int] = None,
+        escape_attempts: Optional[int] = None,
+        escape_successes: Optional[int] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Update metrics and terminal state of a sandbox session."""
+        updates: List[str] = []
+        params: List[Any] = []
+
+        if status is not None:
+            updates.append("status = ?")
+            params.append(status)
+            if status in {"STOPPED", "FAILED", "DESTROYED"}:
+                updates.append("stopped_at = ?")
+                params.append(time.time())
+
+        if duration_seconds is not None:
+            updates.append("duration_seconds = ?")
+            params.append(duration_seconds)
+        if total_actions is not None:
+            updates.append("total_actions = ?")
+            params.append(total_actions)
+        if allowed_actions is not None:
+            updates.append("allowed_actions = ?")
+            params.append(allowed_actions)
+        if blocked_actions is not None:
+            updates.append("blocked_actions = ?")
+            params.append(blocked_actions)
+        if escalated_actions is not None:
+            updates.append("escalated_actions = ?")
+            params.append(escalated_actions)
+        if escape_attempts is not None:
+            updates.append("escape_attempts = ?")
+            params.append(escape_attempts)
+        if escape_successes is not None:
+            updates.append("escape_successes = ?")
+            params.append(escape_successes)
+        if metadata is not None:
+            updates.append("metadata_json = ?")
+            params.append(json.dumps(metadata))
+
+        if not updates:
+            return
+
+        params.append(session_id)
+        sql = f"UPDATE sandbox_sessions SET {', '.join(updates)} WHERE session_id = ?"
+        with self._lock:
+            with self.conn:
+                self.conn.execute(sql, tuple(params))
+
+    def get_sandbox_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve a single sandbox session by its ID."""
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute("SELECT * FROM sandbox_sessions WHERE session_id = ?", (session_id,))
+            row = cursor.fetchone()
+            if not row:
+                return None
+            return self._row_to_dict(cursor, row)
+
+    def list_sandbox_sessions(self, limit: int = 50) -> List[Dict[str, Any]]:
+        """List recent sandbox sessions."""
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT * FROM sandbox_sessions ORDER BY created_at DESC LIMIT ?",
+                (limit,)
+            )
+            rows = cursor.fetchall()
+            return [self._row_to_dict(cursor, r) for r in rows]
+
+    def get_actions_for_sandbox(self, sandbox_session_id: str) -> List[Dict[str, Any]]:
+        """Query all audit actions tied to a sandbox session."""
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT * FROM audit_actions WHERE sandbox_session_id = ? ORDER BY timestamp ASC",
+                (sandbox_session_id,)
+            )
+            rows = cursor.fetchall()
+            return [self._row_to_dict(cursor, r) for r in rows]
+

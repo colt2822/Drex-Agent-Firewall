@@ -29,6 +29,7 @@
     <!-- Navigation Tabs -->
     <nav class="nav-tabs">
       <button class="nav-tab active" data-tab="overview">Overview</button>
+      <button class="nav-tab" data-tab="sandbox">Isolated Runtime</button>
       <button class="nav-tab" data-tab="live-decisions">Live Decisions</button>
       <button class="nav-tab" data-tab="trace-viewer">Trace Visualizer</button>
       <button class="nav-tab" data-tab="agent-demo">Killer Demo</button>
@@ -81,6 +82,89 @@
             <div class="arch-box arch-highlight">Deterministic Policy & Invariants</div>
             <div class="arch-arrow">↓ ALLOW / CONSTRAIN / ESCALATE / BLOCK</div>
             <div class="arch-box">Enforcement Adapters (Shell, FS, Git, HTTP, MCP)</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section: Isolated Agent Runtime -->
+      <section id="tab-sandbox" class="tab-content">
+        <div class="card panel">
+          <div class="panel-header">
+            <h2 class="panel-title">Outer Isolation Runtime Boundary</h2>
+            <div class="d-flex gap-2">
+              <button class="btn btn-secondary" id="btn-refresh-sandbox">Refresh Sessions</button>
+              <button class="btn btn-primary" id="btn-run-escape-probes">Run Escape Probes</button>
+            </div>
+          </div>
+          <p class="panel-desc">
+            Enforces strict OS-level containerization around autonomous agents. Prevents out-of-workspace host access, zero credential leakage from host environment, drops kernel capabilities, and blocks unrestricted direct socket/network egress.
+          </p>
+
+          <div class="metrics-grid mt-3">
+            <div class="metric-card metric-allow">
+              <span class="metric-label">Active Backend</span>
+              <span class="metric-value" id="sandbox-backend-name">Bubblewrap (Rootless)</span>
+            </div>
+            <div class="metric-card metric-allow">
+              <span class="metric-label">Host $HOME Isolation</span>
+              <span class="metric-value">ENFORCED</span>
+            </div>
+            <div class="metric-card metric-allow">
+              <span class="metric-label">Host Credentials Filter</span>
+              <span class="metric-value">CLEARED (0 Leaks)</span>
+            </div>
+            <div class="metric-card metric-allow">
+              <span class="metric-label">Capabilities</span>
+              <span class="metric-value">CAP_DROP ALL</span>
+            </div>
+            <div class="metric-card metric-allow">
+              <span class="metric-label">Container Sockets</span>
+              <span class="metric-value">BLOCKED</span>
+            </div>
+            <div class="metric-card metric-allow">
+              <span class="metric-label">Process Lifecyle</span>
+              <span class="metric-value">--die-with-parent</span>
+            </div>
+          </div>
+
+          <div class="mt-4">
+            <h3 class="panel-title" style="font-size: 1.1rem;">Sandbox Sessions</h3>
+            <div class="table-container mt-2">
+              <table class="data-table" id="table-sandbox-sessions">
+                <thead>
+                  <tr>
+                    <th>Session ID</th>
+                    <th>Backend</th>
+                    <th>Agent</th>
+                    <th>Policy Pack</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                    <th>Escape Probes</th>
+                    <th>Created At</th>
+                  </tr>
+                </thead>
+                <tbody id="tbody-sandbox-sessions">
+                  <tr><td colspan="8" class="text-center text-muted">Loading sandbox sessions...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div class="mt-4" id="sandbox-probe-results-container" style="display: none;">
+            <h3 class="panel-title" style="font-size: 1.1rem;">Live Host Escape Probe Verification</h3>
+            <div class="table-container mt-2">
+              <table class="data-table" id="table-sandbox-probes">
+                <thead>
+                  <tr>
+                    <th>Category</th>
+                    <th>Vector / Probe Name</th>
+                    <th>Outcome</th>
+                    <th>Duration</th>
+                  </tr>
+                </thead>
+                <tbody id="tbody-sandbox-probes"></tbody>
+              </table>
+            </div>
           </div>
         </div>
       </section>

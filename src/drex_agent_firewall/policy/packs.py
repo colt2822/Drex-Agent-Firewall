@@ -18,6 +18,8 @@ from drex_agent_firewall.schemas.config import (
     FilesystemPolicy,
     FirewallConfig,
     NetworkPolicy,
+    SandboxConfig,
+    SandboxLimits,
     ShellPolicy,
 )
 from drex_agent_firewall.schemas.decision import FinalDecision
@@ -86,6 +88,13 @@ def get_safe_local_coding_pack() -> FirewallConfig:
         AUTH=FinalDecision.BLOCK,
         EXTERNAL_PUBLISH=FinalDecision.BLOCK,
     )
+    cfg.sandbox = SandboxConfig(
+        enabled=True,
+        backend="auto",
+        workspace_mode="rw",
+        network_mode="firewall-only",
+        limits=SandboxLimits(memory_mb=4096, cpus=2.0, pids=128, timeout_seconds=60.0),
+    )
     return cfg
 
 
@@ -110,6 +119,13 @@ def get_github_contributor_pack() -> FirewallConfig:
         EXECUTE=0.90,
         NETWORK=0.85,
         EXTERNAL_PUBLISH=0.90,
+    )
+    cfg.sandbox = SandboxConfig(
+        enabled=True,
+        backend="auto",
+        workspace_mode="rw",
+        network_mode="allowlisted",
+        limits=SandboxLimits(memory_mb=4096, cpus=2.0, pids=128, timeout_seconds=90.0),
     )
     return cfg
 
@@ -152,6 +168,13 @@ def get_read_only_research_pack() -> FirewallConfig:
         AUTH=FinalDecision.BLOCK,
         EXTERNAL_PUBLISH=FinalDecision.BLOCK,
     )
+    cfg.sandbox = SandboxConfig(
+        enabled=True,
+        backend="auto",
+        workspace_mode="ro",
+        network_mode="firewall-only",
+        limits=SandboxLimits(memory_mb=2048, cpus=1.0, pids=64, timeout_seconds=30.0),
+    )
     return cfg
 
 
@@ -185,6 +208,13 @@ def get_autonomous_ci_pack() -> FirewallConfig:
         DELETE=0.95,
         EXECUTE=0.80,
         NETWORK=0.80,
+    )
+    cfg.sandbox = SandboxConfig(
+        enabled=True,
+        backend="auto",
+        workspace_mode="rw",
+        network_mode="allowlisted",
+        limits=SandboxLimits(memory_mb=8192, cpus=4.0, pids=256, timeout_seconds=180.0),
     )
     return cfg
 
@@ -234,6 +264,13 @@ def get_production_ops_pack() -> FirewallConfig:
         AUTH=FinalDecision.BLOCK,
         EXTERNAL_PUBLISH=FinalDecision.BLOCK,
     )
+    cfg.sandbox = SandboxConfig(
+        enabled=True,
+        backend="auto",
+        workspace_mode="rw",
+        network_mode="firewall-only",
+        limits=SandboxLimits(memory_mb=4096, cpus=2.0, pids=128, timeout_seconds=60.0),
+    )
     return cfg
 
 
@@ -275,6 +312,13 @@ def get_paranoid_pack() -> FirewallConfig:
         NETWORK=FinalDecision.BLOCK,
         AUTH=FinalDecision.BLOCK,
         EXTERNAL_PUBLISH=FinalDecision.BLOCK,
+    )
+    cfg.sandbox = SandboxConfig(
+        enabled=True,
+        backend="auto",
+        workspace_mode="ro",
+        network_mode="none",
+        limits=SandboxLimits(memory_mb=1024, cpus=1.0, pids=32, timeout_seconds=15.0),
     )
     return cfg
 

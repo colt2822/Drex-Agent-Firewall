@@ -11,6 +11,7 @@ document.addEventListener("DOMContentLoaded", () => {
   initAgentSessions();
   initPolicyMatrix();
   initCalibration();
+  initSandboxUI();
 });
 
 // 1. Navigation Tabs
@@ -498,4 +499,100 @@ function initCalibration() {
   const btn = document.getElementById("btn-refresh-calibration");
   if (btn) btn.addEventListener("click", fetchCalibration);
   fetchCalibration();
+}
+
+// 12. Sandbox Isolated Runtime UI
+async function fetchSandboxSessions() {
+  try {
+    const res = await fetch("/v1/sandbox/sessions?limit=25");
+    if (!res.ok) return;
+    const data = await res.json();
+    const tbody = document.getElementById("tbody-sandbox-sessions");
+    if (!tbody) return;
+    const sessions = data.sandbox_sessions || [];
+
+    if (sessions.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="8" class="text-center text-muted">No sandbox sessions recorded yet. Launch a sandboxed agent via CLI or run the demo.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = sessions.map(s => {
+      const dt = new Date(s.created_at * 1000).toLocaleTimeString();
+      const statusBadge = s.status === 'RUNNING' ? 'badge-allow' : (s.status === 'FAILED' ? 'badge-block' : 'badge-constrain');
+      return `
+        <tr>
+          <td><code>${escapeHtml(s.session_id)}</code></td>
+          <td>${escapeHtml(s.runtime_backend)}</td>
+          <td><code>${escapeHtml(s.agent || 'generic')}</code></td>
+          <td><small>${escapeHtml(s.policy_pack || 'default')}</small></td>
+          <td><span class="badge ${statusBadge}">${s.status}</span></td>
+          <td>${s.total_actions || 0}</td>
+          <td><span class="badge ${s.escape_successes === 0 ? 'badge-allow' : 'badge-block'}">${s.escape_successes === 0 ? '0 Escapes' : s.escape_successes + ' Breaches'}</span></td>
+          <td><small>${dt}</small></td>
+        </tr>
+      `;
+    }).join("");
+  } catch (err) {
+    console.warn("Sandbox sessions fetch error:", err);
+  }
+}
+
+async function fetchSandboxStatus() {
+  try {
+    const res = await fetch("/v1/sandbox/status");
+    if (!res.ok) return;
+    const data = await res.json();
+    const el = document.getElementById("sandbox-backend-name");
+    if (el) {
+      el.innerText = `${data.backend_name.toUpperCase()} (Available: ${data.is_available ? 'YES' : 'NO'})`;
+    }
+  } catch (err) {
+    console.warn("Sandbox status fetch error:", err);
+  }
+}
+
+function initSandboxUI() {
+  const btnRefresh = document.getElementById("btn-refresh-sandbox");
+  if (btnRefresh) {
+    btnRefresh.addEventListener("click", () => {
+      fetchSandboxSessions();
+      fetchSandboxStatus();
+    });
+  }
+
+  const btnProbes = document.getElementById("btn-run-escape-probes");
+  if (btnProbes) {
+    btnProbes.addEventListener("click", async () => {
+      btnProbes.disabled = true;
+      btnProbes.innerText = "Running Probes...";
+      const container = document.getElementById("sandbox-probe-results-container");
+      const tbody = document.getElementById("tbody-sandbox-probes");
+      if (container) container.style.display = "block";
+      if (tbody) tbody.innerHTML = `<tr><td colspan="4" class="text-center text-muted">Running 10 adversarial host escape probes...</td></tr>`;
+
+      try {
+        const res = await fetch("/v1/sandbox/test-escape", { method: "POST" });
+        if (!res.ok) throw new Error("Probe execution failed");
+        const data = await res.json();
+        const probes = data.probes || [];
+        tbody.innerHTML = probes.map(p => `
+          <tr>
+            <td><code>${escapeHtml(p.category)}</code></td>
+            <td>${escapeHtml(p.name)}</td>
+            <td><span class="badge ${p.blocked ? 'badge-allow' : 'badge-block'}">${p.blocked ? 'CONFINED (BLOCKED)' : 'BREACHED'}</span></td>
+            <td>${p.duration_seconds}s</td>
+          </tr>
+        `).join("");
+        fetchSandboxSessions();
+      } catch (err) {
+        alert("Error executing escape probes: " + err.message);
+      } finally {
+        btnProbes.disabled = false;
+        btnProbes.innerText = "Run Escape Probes";
+      }
+    });
+  }
+
+  fetchSandboxStatus();
+  fetchSandboxSessions();
 }

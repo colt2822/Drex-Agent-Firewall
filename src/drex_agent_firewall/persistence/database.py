@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS audit_actions (
     timestamp REAL NOT NULL,
     agent TEXT NOT NULL,
     session_id TEXT,
+    sandbox_session_id TEXT,
     tool TEXT NOT NULL,
     operation TEXT NOT NULL,
     normalized_target TEXT,
@@ -42,10 +43,32 @@ CREATE TABLE IF NOT EXISTS audit_actions (
     outcome_recorded_at REAL
 );
 
+CREATE TABLE IF NOT EXISTS sandbox_sessions (
+    session_id TEXT PRIMARY KEY,
+    runtime_backend TEXT NOT NULL,
+    runtime_id TEXT,
+    agent TEXT,
+    policy_pack TEXT,
+    workspace_path TEXT NOT NULL,
+    network_mode TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at REAL NOT NULL,
+    stopped_at REAL,
+    duration_seconds REAL,
+    total_actions INTEGER DEFAULT 0,
+    allowed_actions INTEGER DEFAULT 0,
+    blocked_actions INTEGER DEFAULT 0,
+    escalated_actions INTEGER DEFAULT 0,
+    escape_attempts INTEGER DEFAULT 0,
+    escape_successes INTEGER DEFAULT 0,
+    metadata_json TEXT
+);
+
 CREATE INDEX IF NOT EXISTS idx_actions_trace ON audit_actions(trace_id);
 CREATE INDEX IF NOT EXISTS idx_actions_timestamp ON audit_actions(timestamp);
 CREATE INDEX IF NOT EXISTS idx_actions_tool ON audit_actions(tool);
 CREATE INDEX IF NOT EXISTS idx_actions_decision ON audit_actions(final_decision);
+CREATE INDEX IF NOT EXISTS idx_sandbox_status ON sandbox_sessions(status);
 """
 
 
@@ -56,5 +79,13 @@ def init_db(db_path: str = "drex_firewall.db") -> sqlite3.Connection:
     conn.execute("PRAGMA synchronous=NORMAL;")
     conn.execute("PRAGMA busy_timeout=5000;")
     conn.executescript(SCHEMA_SQL)
+
+    # Safe migration: ensure sandbox_session_id column exists
+    cursor = conn.execute("PRAGMA table_info(audit_actions);")
+    cols = [r[1] for r in cursor.fetchall()]
+    if "sandbox_session_id" not in cols:
+        conn.execute("ALTER TABLE audit_actions ADD COLUMN sandbox_session_id TEXT;")
+
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_actions_sandbox ON audit_actions(sandbox_session_id);")
     conn.commit()
     return conn

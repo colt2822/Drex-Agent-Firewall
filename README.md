@@ -91,32 +91,35 @@ pip install -e .
 # Health check
 drex-firewall health
 
-# Run the real autonomous agent demo in a disposable repository
-drex-firewall demo-agent
+# Run real autonomous agent inside isolated sandbox runtime (Bubblewrap)
+drex-firewall sandbox demo --agent claude
+
+# Run dedicated host escape audit session with real agent inside sandbox
+drex-firewall sandbox demo --escape-session --agent claude
+
+# Run 100-scenario outer isolation and host escape benchmark
+drex-firewall benchmark --isolation
+
+# Verify sandbox boundary against automated host escape probes
+drex-firewall sandbox test-escape
+
+# Interactive confined bash shell
+drex-firewall sandbox shell --workspace .
 
 # Run the 220-scenario adversarial red-team benchmark
 drex-firewall benchmark --redteam
 
-# Run the latency and throughput benchmark across 3 modes
+# Run the 186-scenario hostile architectural bypass benchmark
+drex-firewall benchmark --bypass
+
+# Run baseline benchmark suite (105 scenarios)
+drex-firewall benchmark
+
+# Run latency and overhead benchmark
 drex-firewall benchmark --latency
 
 # Run multi-pack historical policy simulator
 drex-firewall simulate --limit 100
-
-# Evaluate probabilistic calibration and Brier score
-drex-firewall calibration
-
-# Run the 8-step killer demo
-drex-firewall demo
-
-# Evaluate an action
-drex-firewall evaluate --tool shell --operation execute --command "git status"
-
-# Run a guarded shell command
-drex-firewall shell -- git status
-
-# Run baseline benchmark suite (105 scenarios)
-drex-firewall benchmark
 
 # Start Web UI and REST API server
 drex-firewall serve --port 8000
@@ -182,6 +185,63 @@ SQLite WAL Audit Trail & Calibration
 Run with a single command:
 ```bash
 drex-firewall demo-agent
+```
+
+---
+
+## DREX ISOLATED AGENT RUNTIME (`drex-firewall sandbox`)
+
+An optional, production-grade outer operating system boundary around autonomous agents. Prevents agents from bypassing application-level firewalls via direct native host execution.
+
+```text
+HOST ENVIRONMENT
+ │
+ │ [Controlled Boundary]
+ ▼
+┌────────────────────────────────────────────────────────┐
+│             DREX ISOLATED AGENT RUNTIME                │
+│                                                        │
+│  Autonomous Agent (Claude Code / Codex / Generic)      │
+│                     │                                  │
+│                     ▼                                  │
+│            Drex Agent Firewall                         │
+│                     │                                  │
+│         ┌───────────┼───────────┐                      │
+│         ▼           ▼           ▼                      │
+│        MCP        Shell        Git                     │
+│        FS         HTTP        GitHub                   │
+│                                                        │
+│  • Writable /workspace mount only                      │
+│  • Ephemeral isolated /home/agent                      │
+│  • Zero host credential inheritance                    │
+│  • Deny direct network egress by default               │
+│  • Dropped kernel capabilities (CAP_DROP ALL)          │
+│  • Die-with-parent lifecycle supervision               │
+└────────────────────────────────────────────────────────┘
+```
+
+### Key Guarantees
+- **Host `$HOME` Isolated**: The host home directory (`~`) is never mounted. The agent runs with an isolated ephemeral tmpfs at `/home/agent`.
+- **Zero Host Credential Leakage**: Environment is wiped (`--clearenv`). Secrets (`GITHUB_TOKEN`, `AWS_*`, `OPENAI_API_KEY`, `SSH_AUTH_SOCK`) are purged.
+- **Rootless & Unprivileged**: Runs via unprivileged user namespaces (`bwrap` bubblewrap), drops all 38 Linux capabilities (`CAP_DROP ALL`), and forbids setuid.
+- **Docker Socket Blocked**: Daemon sockets (`/var/run/docker.sock`) are inaccessible, neutralizing container-breakout vectors.
+
+### Commands
+```bash
+# Run command inside sandbox
+drex-firewall sandbox run --workspace . -- ls -la /workspace
+
+# Run Claude Code inside isolated sandbox
+drex-firewall sandbox demo --agent claude
+
+# Run defensive escape audit session with Claude Code
+drex-firewall sandbox demo --escape-session --agent claude
+
+# Verify 10 host escape vectors
+drex-firewall sandbox test-escape
+
+# Run 100-scenario outer isolation benchmark
+drex-firewall benchmark --isolation
 ```
 
 ---

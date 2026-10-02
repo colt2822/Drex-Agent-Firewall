@@ -186,7 +186,11 @@ class SecretRedactor:
             try:
                 decoded_bytes = base64.b64decode(cand, validate=True)
                 decoded_str = decoded_bytes.decode("utf-8", errors="ignore")
-                if any(sec in decoded_str for sec in self._custom_secrets) or any(pat.search(decoded_str) for pat in SECRET_PATTERNS):
+                if (
+                    any(sec in decoded_str for sec in self._custom_secrets)
+                    or any(pat.search(decoded_str) for pat in SECRET_PATTERNS)
+                    or (len(decoded_str) == 40 and re.match(r"^[A-Za-z0-9/+=]{40}$", decoded_str))
+                ):
                     return True
             except Exception:
                 pass

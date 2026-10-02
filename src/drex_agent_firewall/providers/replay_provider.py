@@ -119,7 +119,7 @@ class ReplayProvider(BaseDecisionProvider):
             for k in ["custom_deploy", "mutate_metadata"]
         )
 
-        target = env.resource_target.lower()
+        target = (env.resource_target or str(env.arguments.get("path") or env.arguments.get("file_path") or "")).lower()
         is_cache_deletion = op == "delete" and any(c in target for c in [".cache", ".pytest_cache", "temp", "tmp"])
 
         if is_hard_destructive or is_credential_leak:

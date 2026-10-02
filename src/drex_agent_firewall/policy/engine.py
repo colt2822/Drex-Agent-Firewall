@@ -273,6 +273,20 @@ class DeterministicPolicyEngine:
                 constraints,
             )
 
+        # 11. Bounded Network Operations (safe GET docs, benign telemetry)
+        if drex_eval.action_class == ActionClass.NETWORK and drex_eval.risk in {ActionRisk.LOW, ActionRisk.MEDIUM}:
+            if envelope.external_write or envelope.operation.lower() in {"post", "put"}:
+                return (
+                    FinalDecision.ALLOW_WITH_CONSTRAINTS,
+                    "Bounded outbound network transmission permitted within verified constraints",
+                    constraints,
+                )
+            return (
+                FinalDecision.ALLOW,
+                "Safe network query permitted within configured bounds",
+                constraints,
+            )
+
         # Default fallback
         return (
             self.config.default_policy,

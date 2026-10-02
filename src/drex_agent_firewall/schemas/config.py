@@ -101,6 +101,57 @@ class NetworkPolicy(BaseModel):
     )
 
 
+class SandboxMount(BaseModel):
+    """Explicit filesystem mount specification for isolated agent runtime."""
+    host_path: str
+    container_path: str
+    mode: str = Field(default="ro", description="'ro' (read-only) or 'rw' (read-write)")
+
+
+class SandboxLimits(BaseModel):
+    """Resource constraints for sandboxed agent processes."""
+    memory_mb: int = Field(default=4096, description="Memory limit in megabytes")
+    cpus: float = Field(default=2.0, description="CPU core quota")
+    pids: int = Field(default=128, description="Maximum concurrent process threads/pids")
+    timeout_seconds: float = Field(default=60.0, description="Execution timeout in seconds")
+    max_output_bytes: int = Field(default=10 * 1024 * 1024, description="Maximum captured stdout/stderr bytes")
+
+
+class SandboxConfig(BaseModel):
+    """Configuration for outer OS-level agent sandbox isolation boundary."""
+    enabled: bool = Field(default=False, description="Whether sandbox isolation is active")
+    backend: str = Field(default="auto", description="'auto', 'bubblewrap', 'podman', 'docker', 'none', 'microvm'")
+    workspace_mode: str = Field(default="rw", description="Workspace mount permissions ('rw' or 'ro')")
+    expose_host_home: bool = Field(default=False, description="Strictly false: never mount host $HOME")
+    expose_host_root: bool = Field(default=False, description="Strictly false: never mount host root /")
+    expose_container_socket: bool = Field(default=False, description="Strictly false: never mount /var/run/docker.sock")
+    network_mode: str = Field(default="firewall-only", description="'none', 'firewall-only', 'allowlisted', 'host'")
+    inherit_env: bool = Field(default=False, description="Strictly false: do not inherit host environment")
+    env_allowlist: List[str] = Field(
+        default_factory=lambda: ["PATH", "LANG", "LC_ALL", "TERM", "USER", "HOME", "SHELL", "PYTHONPATH"]
+    )
+    blocked_env_vars: List[str] = Field(
+        default_factory=lambda: [
+            "GITHUB_TOKEN",
+            "GH_TOKEN",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AWS_SESSION_TOKEN",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "GOOGLE_API_KEY",
+            "DREX_API_KEY",
+            "SSH_AUTH_SOCK",
+            "SSH_AGENT_PID",
+            "HTTP_PROXY",
+            "HTTPS_PROXY",
+            "ALL_PROXY",
+        ]
+    )
+    limits: SandboxLimits = Field(default_factory=SandboxLimits)
+    extra_mounts: List[SandboxMount] = Field(default_factory=list)
+
+
 class FirewallConfig(BaseModel):
     """Global configuration for Drex Agent Firewall."""
     provider: ProviderConfig = Field(default_factory=ProviderConfig)
@@ -110,6 +161,7 @@ class FirewallConfig(BaseModel):
     filesystem: FilesystemPolicy = Field(default_factory=FilesystemPolicy)
     shell: ShellPolicy = Field(default_factory=ShellPolicy)
     network: NetworkPolicy = Field(default_factory=NetworkPolicy)
+    sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
     database_path: str = "drex_firewall.db"
 
     @classmethod

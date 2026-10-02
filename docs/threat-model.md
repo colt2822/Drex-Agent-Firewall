@@ -97,7 +97,7 @@ SQLite WAL Audit Persistence & Outcome Calibration
 
 ### Hostile Bypass Assessment & Trust Boundary Analysis
 An autonomous coding agent can attempt to circumvent mediation if it has access to unmediated channels.
-The Drex Agent Firewall enforces mediation at the tool boundary (MCP proxy, Python SDK wrappers, and guarded execution adapters).
+The Drex Agent Firewall enforces mediation at both the application tool boundary and the outer operating system confinement layer.
 
 | Interaction Path | Mediation Status | Boundary & Enforcement Invariant |
 | :--- | :--- | :--- |
@@ -106,16 +106,17 @@ The Drex Agent Firewall enforces mediation at the tool boundary (MCP proxy, Pyth
 | **Shell Pipelines & Subshells** | **INTERCEPTED** | `ShellNormalizer` recursively strips quote fragmentation, unrolls shell wrappers (`sh -c`, `bash -c`), decodes base64 pipes, and extracts inline code (`python -c`, `node -e`, `ruby -e`, `perl -e`, `awk`, `find -exec`). |
 | **Script Staging & Task Runners** | **INTERCEPTED** | Inline interpreters and modifications to execution manifests (`Makefile`, `package.json`, build hooks) are monitored for staged malicious commands. |
 | **Network & SSRF** | **INTERCEPTED** | Destination host, proxy environment variables (`HTTP_PROXY`, `ALL_PROXY`), redirect targets, and Unix domain socket HTTP clients are validated. |
-| **Direct Unconfined Host Access** | **ENVIRONMENT BOUNDARY** | If an autonomous agent is granted raw, unmediated POSIX access to the host kernel without routing through MCP/Adapters, it can bypass any application-level firewall. **Hard Requirement**: Autonomous coding agents must be confined inside a container or sandbox where all tool capabilities are routed through Drex Agent Firewall adapters or MCP proxy. |
+| **Direct Host Access** | **ISOLATED (CLOSED)** | Fully resolved via **Drex Isolated Agent Runtime (`drex-firewall sandbox`)**. Agents run in unprivileged Linux namespaces (`bubblewrap`, container, or microVM) where host `$HOME` is never mounted, host credentials are wiped, capabilities are dropped (`CAP_DROP ALL`), and direct network egress is denied by default. |
 
 ---
 
 ## 6. Security Invariant Verification
 
-The firewall's invariants are verified by:
-1. **Automated Unit & Integration Tests**: 62 unit and integration tests covering every adapter, validator, normalizer, and provider.
+The firewall's invariants are verified across four comprehensive benchmark suites:
+1. **Automated Unit & Integration Tests**: 69 unit and integration tests covering every adapter, validator, normalizer, sandbox runtime backend, and API endpoint.
 2. **105-Scenario Standard Benchmark Suite**: 100.0% accuracy, 0.0% false allow rate.
-3. **220-Scenario Adversarial Red-Team Suite**: Rigorous bypass test suite across all 10 categories achieving **99.09% accuracy** and **0.0% high-impact false allows**.
-4. **186-Scenario Hostile Bypass Benchmark Suite**: Attacks against the mediation architecture directly (`benchmarks/firewall_bypass/`) achieving **96.24% accuracy** and **0.0% high-impact false allows**.
-5. **Live Autonomous Agent Testing**: Claude Code v2.1.287 executing inside disposable repositories with live bait interception (100% autonomy, 0 bait leaked, test suite passing, fix committed).
+3. **220-Scenario Adversarial Red-Team Suite**: Rigorous bypass test suite across all 10 categories achieving **99.55% accuracy** and **0.0% high-impact false allows**.
+4. **186-Scenario Hostile Bypass Benchmark Suite**: Attacks against the mediation architecture directly (`benchmarks/firewall_bypass/`) achieving **98.39% accuracy** and **0.0% high-impact false allows**.
+5. **100-Scenario Drex Isolation & Host Escape Benchmark**: 10 attack categories (`benchmarks/isolation/`) evaluating outer OS container confinement, achieving **98.0% accuracy** and **0.0% high-impact false allows**.
+6. **Live Autonomous Agent Testing**: Claude Code v2.1.287 executing inside isolated sandbox runtime with live bait interception and verified defensive host escape confinement (100% autonomy, 0 bait leaked, test suite passing, fix committed).
 

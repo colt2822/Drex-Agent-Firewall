@@ -159,10 +159,45 @@ class LatencyBenchmark:
         metrics["status"] = "completed"
         return metrics
 
+    def benchmark_sandbox_overhead(self, iterations: int = 15) -> Dict[str, Any]:
+        """Measure sandbox creation and execution overhead."""
+        from drex_agent_firewall.sandbox.manager import SandboxManager
+
+        mgr = SandboxManager()
+        startup_ms = []
+        exec_ms = []
+
+        for i in range(iterations):
+            t0 = time.perf_counter()
+            info = mgr.create_session(workspace_path=".", policy_pack="safe-local-coding")
+            t1 = time.perf_counter()
+            startup_ms.append((t1 - t0) * 1000.0)
+
+            t2 = time.perf_counter()
+            res = mgr.exec_command(info.session_id, ["python3", "-c", "pass"])
+            t3 = time.perf_counter()
+            exec_ms.append((t3 - t2) * 1000.0)
+
+            mgr.stop_session(info.session_id)
+            mgr.destroy_session(info.session_id)
+
+        startup_metrics = self._compute_percentiles(startup_ms)
+        exec_metrics = self._compute_percentiles(exec_ms)
+        return {
+            "startup": startup_metrics,
+            "exec": exec_metrics,
+            "p50": startup_metrics["p50"],
+            "p95": startup_metrics["p95"],
+            "p99": startup_metrics["p99"],
+            "mean": startup_metrics["mean"],
+            "throughput_ops_sec": round(iterations / (sum(startup_ms) / 1000.0), 1) if sum(startup_ms) > 0 else 0,
+        }
+
     def run_all(self) -> Dict[str, Any]:
         """Run all latency benchmarks and return combined report."""
         return {
             "local_deterministic_policy": self.benchmark_local_policy(iterations=200),
             "full_replay_firewall": self.benchmark_replay_firewall(iterations=200),
+            "sandbox_startup_overhead": self.benchmark_sandbox_overhead(iterations=10),
             "live_drex_api": self.benchmark_live_drex(max_requests=5),
         }

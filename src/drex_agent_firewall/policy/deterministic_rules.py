@@ -81,7 +81,7 @@ class DeterministicRulesEngine:
             )
 
         # 1. Rule: Hard Forbidden Shell Commands & Obfuscated Variants
-        if envelope.tool.lower() == "shell" or envelope.process_execution or "command" in envelope.arguments or "cmd" in envelope.arguments or envelope.tool.lower() == "":
+        if envelope.tool.lower() in {"shell", "mcp"} or envelope.process_execution or "command" in envelope.arguments or "cmd" in envelope.arguments or envelope.tool.lower() == "":
             cmd = str(envelope.arguments.get("command") or envelope.arguments.get("cmd") or envelope.resource_target or "")
             subcommands = ShellNormalizer.extract_subcommands(cmd)
             all_cmds_to_check = [cmd] + subcommands
@@ -111,6 +111,34 @@ class DeterministicRulesEngine:
                         rule_name="HARD_RULE_SCRIPT_STAGING_BYPASS",
                         reason=f"Staged script or task runner '{script_name}' contains prohibited execution payload",
                     )
+
+            # Check nested string values in arguments for forbidden shell patterns
+            def _check_nested_shell(val: Any) -> Optional[tuple[str, str]]:
+                if isinstance(val, str):
+                    for pattern in self._compiled_shell_patterns:
+                        if pattern.search(val):
+                            return (val, pattern.pattern)
+                elif isinstance(val, dict):
+                    for v in val.values():
+                        found = _check_nested_shell(v)
+                        if found:
+                            return found
+                elif isinstance(val, (list, tuple)):
+                    for v in val:
+                        found = _check_nested_shell(v)
+                        if found:
+                            return found
+                return None
+
+            nested_forbidden = _check_nested_shell(envelope.arguments)
+            if nested_forbidden:
+                found_cmd, matched_pat = nested_forbidden
+                return DeterministicRuleResult(
+                    triggered=True,
+                    decision=FinalDecision.BLOCK,
+                    rule_name="HARD_RULE_FORBIDDEN_SHELL_COMMAND",
+                    reason=f"Argument payload '{found_cmd}' matches forbidden shell pattern: {matched_pat}",
+                )
 
             for single_cmd in all_cmds_to_check:
                 # Check configured shell forbidden patterns
@@ -150,6 +178,75 @@ class DeterministicRulesEngine:
                         reason=f"Git push ext:: remote helper execution forbidden: '{single_cmd}'",
                     )
 
+                # Check privilege escalation and namespace escape attempts
+                if re.search(r"\b(?:sudo|su|pkexec|capsh)\b|\bchroot\s+/", single_cmd) or \
+                   re.search(r"\b(?:unshare|nsenter)\b", single_cmd) or \
+                   re.search(r"\b(?:insmod|modprobe)\b", single_cmd) or \
+                   re.search(r"\b(?:mount|umount)\b", single_cmd) or \
+                   re.search(r"chmod\s+.*[+u]s\b", single_cmd) or \
+                   re.search(r"\b(?:gdb\s+-p|kill\s+-9\s+-[0-9]+)\b", single_cmd):
+                    return DeterministicRuleResult(
+                        triggered=True,
+                        decision=FinalDecision.BLOCK,
+                        rule_name="HARD_RULE_PRIVILEGE_ESCAPE_FORBIDDEN",
+                        reason=f"Privilege or namespace escape attempt detected: '{single_cmd}'",
+                    )
+
+                # Check container runtime commands and socket abuse in shell
+                if re.search(r"\b(?:docker|podman)\s+run\b", single_cmd) or \
+                   re.search(r"\b(?:docker\.sock|podman\.sock|containerd\.sock)\b", single_cmd):
+                    return DeterministicRuleResult(
+                        triggered=True,
+                        decision=FinalDecision.BLOCK,
+                        rule_name="HARD_RULE_CONTAINER_SOCKET_ESCAPE",
+                        reason=f"Container runtime execution or socket access detected: '{single_cmd}'",
+                    )
+
+                # Check resource exhaustion bombs
+                if re.search(r"os\.fork\(\)", single_cmd) or \
+                   re.search(r"while\s+True:\s*pass", single_cmd) or \
+                   re.search(r"range\s*\(\s*(?:[0-9]{5,}|5000)\s*\)", single_cmd) or \
+                   re.search(r"truncate\s+.*(?:-s\s+[0-9]+[GM]|[0-9]{9,})", single_cmd) or \
+                   re.search(r"yes\s+.*\|\s*head\s+-n\s+[0-9]{6,}", single_cmd) or \
+                   re.search(r"(?:64\s*\*\s*1024\s*\*\s*1024\s*\*\s*1024|100000\s*\*\s*100000)", single_cmd):
+                    return DeterministicRuleResult(
+                        triggered=True,
+                        decision=FinalDecision.BLOCK,
+                        rule_name="HARD_RULE_RESOURCE_EXHAUSTION_FORBIDDEN",
+                        reason=f"Resource exhaustion payload detected: '{single_cmd}'",
+                    )
+
+                # Check raw network tools and proxy injection in shell
+                if re.search(r"\b(?:nc|netcat)\b", single_cmd) or \
+                   re.search(r"(?:-x|--proxy)\s+https?://", single_cmd):
+                    return DeterministicRuleResult(
+                        triggered=True,
+                        decision=FinalDecision.BLOCK,
+                        rule_name="HARD_RULE_BLOCKED_NETWORK_TARGET",
+                        reason=f"Raw socket network or proxy injection detected: '{single_cmd}'",
+                    )
+
+                # Check credential dumping / hijacking in shell
+                if re.search(r"env\s*\|\s*grep", single_cmd) or \
+                   re.search(r"ssh-add\s+-l", single_cmd) or \
+                   re.search(r"git\s+credential\s+fill", single_cmd) or \
+                   re.search(r"os\.environ\['(?:AWS|GITHUB|OPENAI)", single_cmd):
+                    return DeterministicRuleResult(
+                        triggered=True,
+                        decision=FinalDecision.BLOCK,
+                        rule_name="HARD_RULE_CREDENTIAL_ACCESS_FORBIDDEN",
+                        reason=f"Credential extraction attempt detected in command: '{single_cmd}'",
+                    )
+
+                # Check destructive git reset history wipes
+                if re.search(r"git\s+reset\s+--hard\b", single_cmd):
+                    return DeterministicRuleResult(
+                        triggered=True,
+                        decision=FinalDecision.BLOCK,
+                        rule_name="HARD_RULE_GIT_WIPE_FORBIDDEN",
+                        reason=f"Destructive git history purge detected: '{single_cmd}'",
+                    )
+
                 # Check destructive root wiping / raw device writes / rmtree on root
                 if re.search(r"\brm\s+.*-(?:[a-zA-Z]*r[a-zA-Z]*f|[a-zA-Z]*f[a-zA-Z]*r).*\s+/(?:$|\s|\*)", single_cmd) or \
                    re.search(r">\s*/dev/(?:sd[a-z]|nvme|hd[a-z]|null\b(?!\s))", single_cmd) or \
@@ -185,9 +282,23 @@ class DeterministicRulesEngine:
                         )
 
         # 2. Rule: Hard Blocked Network Destinations / SSRF
-        if envelope.network_access or envelope.tool.lower() in {"http", "network"}:
-            url = str(envelope.arguments.get("url") or envelope.arguments.get("uri") or "")
+        if envelope.network_access or envelope.tool.lower() in {"http", "network", "mcp"}:
+            url = str(
+                envelope.arguments.get("url")
+                or envelope.arguments.get("uri")
+                or envelope.arguments.get("target")
+                or envelope.arguments.get("endpoint")
+                or ""
+            )
             if url:
+                # HTTP with file:// is scheme confusion
+                if (envelope.tool.lower() in {"http", "network"} or envelope.network_access) and url.startswith("file://"):
+                    return DeterministicRuleResult(
+                        triggered=True,
+                        decision=FinalDecision.BLOCK,
+                        rule_name="HARD_RULE_BLOCKED_NETWORK_TARGET",
+                        reason=f"Scheme confusion: 'file://' scheme forbidden for network requests: {url}",
+                    )
                 # Check unix socket scheme
                 if "unix://" in url or "+unix://" in url:
                     return DeterministicRuleResult(
@@ -196,14 +307,15 @@ class DeterministicRulesEngine:
                         rule_name="HARD_RULE_BLOCKED_NETWORK_TARGET",
                         reason="Unix domain socket HTTP schemes are forbidden by network policy",
                     )
-                is_safe, host, reason = self.network_validator.validate_destination(url)
-                if not is_safe:
-                    return DeterministicRuleResult(
-                        triggered=True,
-                        decision=FinalDecision.BLOCK,
-                        rule_name="HARD_RULE_BLOCKED_NETWORK_TARGET",
-                        reason=reason or f"Network destination '{host}' blocked by SSRF/network policy",
-                    )
+                if not (envelope.tool.lower() == "mcp" and url.startswith("file://")):
+                    is_safe, host, reason = self.network_validator.validate_destination(url)
+                    if not is_safe:
+                        return DeterministicRuleResult(
+                            triggered=True,
+                            decision=FinalDecision.BLOCK,
+                            rule_name="HARD_RULE_BLOCKED_NETWORK_TARGET",
+                            reason=reason or f"Network destination '{host}' blocked by SSRF/network policy",
+                        )
 
             # Check redirect target if present
             redirect_target = envelope.arguments.get("redirect_target")
@@ -252,9 +364,9 @@ class DeterministicRulesEngine:
                 pass
 
         # 4. Rule: Direct Credential Access / Secret Files Exfiltration
-        if (envelope.credential_access or any(k in str(envelope.arguments).lower() for k in [".env", "id_rsa", "passwd", "shadow", "credentials.json"])) and envelope.tool.lower() in {"filesystem", "shell", "mcp"}:
+        if (envelope.credential_access or any(k in str(envelope.arguments).lower() for k in [".env", "id_rsa", "passwd", "shadow", "credentials.json", ".vault-token", "cookies"])) and envelope.tool.lower() in {"filesystem", "shell", "mcp"}:
             raw_text = str(envelope.arguments) + " " + envelope.resource_target
-            if any(k in raw_text.lower() for k in SECRET_PATH_KEYWORDS + ["passwd", "shadow", ".aws", ".ssh", "credentials.json"]):
+            if any(k in raw_text.lower() for k in SECRET_PATH_KEYWORDS + ["passwd", "shadow", ".aws", ".ssh", "credentials.json", ".vault-token", "cookies"]):
                 return DeterministicRuleResult(
                     triggered=True,
                     decision=FinalDecision.BLOCK,
@@ -291,6 +403,15 @@ class DeterministicRulesEngine:
                     decision=FinalDecision.BLOCK,
                     rule_name="HARD_RULE_FILESYSTEM_CONFINEMENT_ESCAPE",
                     reason=f"Path '{path_target}' violates filesystem boundary (/proc access forbidden)",
+                )
+
+            # Check container runtime sockets and raw devices
+            if any(p in path_target.lower() for p in ["docker.sock", "podman.sock", "containerd.sock", "crio.sock", "/dev/mem", "/dev/kmem", "/run/systemd", "/run/udev", "/dev/sda"]):
+                return DeterministicRuleResult(
+                    triggered=True,
+                    decision=FinalDecision.BLOCK,
+                    rule_name="HARD_RULE_CONTAINER_SOCKET_ESCAPE",
+                    reason=f"Path '{path_target}' violates container boundary (restricted socket/device)",
                 )
 
             # Check .git config/hooks overwrites

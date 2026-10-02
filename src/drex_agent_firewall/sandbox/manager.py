@@ -1,0 +1,252 @@
+"""Sandbox Manager orchestrating isolated agent runtime lifecycles and Drex integration."""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import shutil
+import sys
+import time
+import uuid
+from typing import Any, Dict, List, Optional
+
+from drex_agent_firewall.persistence.repository import ActionRepository
+from drex_agent_firewall.policy.packs import get_policy_pack
+from drex_agent_firewall.sandbox.backend import (
+    IsolationBackend,
+    SandboxLimits,
+    SandboxResult,
+    SandboxSessionInfo,
+    SandboxSpec,
+    SandboxStatus,
+)
+from drex_agent_firewall.sandbox.factory import get_isolation_backend
+from drex_agent_firewall.schemas.config import FirewallConfig
+
+logger = logging.getLogger(__name__)
+
+
+class SandboxManager:
+    """Manages the full lifecycle of an isolated agent runtime session.
+    
+    Responsibilities:
+    1. Resolve configuration and policy packs
+    2. Instantiate and validate isolation backend (fail-closed if unavailable)
+    3. Generate MCP configuration for firewall-mediated tool execution
+    4. Confine agent within outer OS sandbox boundary
+    5. Maintain correlated audit trace in SQLite repository
+    6. Ensure clean teardown without corrupting user workspace
+    """
+
+    def __init__(
+        self,
+        backend_type: str = "auto",
+        db_path: str = "drex_firewall.db",
+        repository: Optional[ActionRepository] = None,
+    ):
+        self.backend_type = backend_type
+        self.db_path = db_path
+        self.repository = repository or ActionRepository(db_path=db_path)
+        self.backend: IsolationBackend = get_isolation_backend(backend_type)
+
+    def create_session(
+        self,
+        workspace_path: str,
+        policy_pack: str = "safe-local-coding",
+        agent_type: str = "claude",
+        network_mode: Optional[str] = None,
+        workspace_mode: str = "rw",
+        session_id: Optional[str] = None,
+        limits: Optional[SandboxLimits] = None,
+        config: Optional[FirewallConfig] = None,
+        env_overrides: Optional[Dict[str, str]] = None,
+    ) -> SandboxSessionInfo:
+        """Create and launch a new isolated sandbox session."""
+        sid = session_id or f"sbx-{uuid.uuid4().hex[:10]}"
+        abs_workspace = os.path.abspath(workspace_path)
+
+        if not os.path.exists(abs_workspace):
+            raise FileNotFoundError(f"Target workspace does not exist: {abs_workspace}")
+
+        # Load policy pack configuration
+        cfg = config or get_policy_pack(policy_pack)
+        net_mode = network_mode or cfg.sandbox.network_mode
+        lims = limits or cfg.sandbox.limits
+
+        # Generate Drex MCP configuration inside workspace if not present
+        mcp_cfg_path = self._generate_mcp_config(abs_workspace, policy_pack, sid, agent_type)
+
+        spec = SandboxSpec(
+            session_id=sid,
+            workspace_path=abs_workspace,
+            policy_pack=policy_pack,
+            agent_type=agent_type,
+            config=cfg,
+            network_mode=net_mode,
+            workspace_mode=workspace_mode,
+            limits=lims,
+            mcp_config_path=mcp_cfg_path,
+            drex_db_path=os.path.abspath(self.db_path),
+            env_overrides=env_overrides or {},
+        )
+
+        try:
+            # Prepare backend
+            self.backend.prepare(spec)
+
+            # Record session initiation in repository
+            self.repository.record_sandbox_session(
+                session_id=sid,
+                runtime_backend=self.backend.name,
+                workspace_path=abs_workspace,
+                network_mode=net_mode,
+                status="RUNNING",
+                agent=agent_type,
+                policy_pack=policy_pack,
+                runtime_id=f"{self.backend.name}-{sid}",
+                metadata={
+                    "limits": lims.model_dump(),
+                    "workspace_mode": workspace_mode,
+                    "mcp_config_path": mcp_cfg_path,
+                },
+            )
+
+            # Launch backend
+            info = self.backend.launch(spec)
+            return info
+
+        except Exception as e:
+            # Record failure in repository (fail-closed)
+            self.repository.record_sandbox_session(
+                session_id=sid,
+                runtime_backend=self.backend.name,
+                workspace_path=abs_workspace,
+                network_mode=net_mode,
+                status="FAILED",
+                agent=agent_type,
+                policy_pack=policy_pack,
+                metadata={"error": str(e)},
+            )
+            raise RuntimeError(f"Sandbox session creation failed: {e}") from e
+
+    def _generate_mcp_config(
+        self,
+        workspace_path: str,
+        policy_pack: str,
+        session_id: str,
+        agent_type: str,
+    ) -> str:
+        """Write drex_mcp_config.json in workspace to direct agent tools through Drex MCP server."""
+        mcp_cfg = {
+            "mcpServers": {
+                "drex_firewall": {
+                    "command": "python3",
+                    "args": [
+                        "-m",
+                        "drex_agent_firewall.mcp.server",
+                        "--workspace",
+                        "/workspace",
+                        "--policy",
+                        policy_pack,
+                        "--session-id",
+                        session_id,
+                        "--agent-id",
+                        f"{agent_type}-sandboxed",
+                    ],
+                    "env": {
+                        "DREX_DATABASE_PATH": "/workspace/.drex_firewall.db",
+                    },
+                }
+            }
+        }
+        cfg_file = os.path.join(workspace_path, ".drex_mcp_config.json")
+        with open(cfg_file, "w") as f:
+            json.dump(mcp_cfg, f, indent=2)
+        return cfg_file
+
+    def run_agent(
+        self,
+        session_id: str,
+        prompt: str,
+        timeout: Optional[float] = None,
+    ) -> SandboxResult:
+        """Execute autonomous coding agent inside the isolated runtime."""
+        info = self.backend.status(session_id)
+        if info != SandboxStatus.RUNNING:
+            raise RuntimeError(f"Sandbox session {session_id} is not running (status: {info})")
+
+        # Resolve session details from repository
+        sess_record = self.repository.get_sandbox_session(session_id)
+        agent_type = sess_record.get("agent", "claude") if sess_record else "claude"
+
+        # Determine agent command vector
+        if agent_type == "claude":
+            claude_bin = "claude"
+            cmd = [
+                claude_bin,
+                "--dangerously-skip-permissions",
+            ]
+            res = self.exec_command(session_id, cmd, timeout=timeout, input=prompt)
+            return res
+        elif agent_type == "codex":
+            codex_bin = shutil.which("codex") or "/opt/agent_tools/bin/codex"
+            cmd = [
+                codex_bin,
+                "exec",
+                prompt,
+                "--cd",
+                "/workspace",
+                "--dangerously-bypass-approvals-and-sandbox",
+            ]
+            res = self.exec_command(session_id, cmd, timeout=timeout)
+            return res
+        else:
+            cmd = ["bash", "-c", prompt]
+            res = self.exec_command(session_id, cmd, timeout=timeout)
+            return res
+
+    def exec_command(
+        self,
+        session_id: str,
+        command: List[str],
+        cwd: Optional[str] = None,
+        env: Optional[Dict[str, str]] = None,
+        timeout: Optional[float] = None,
+        input: Optional[str] = None,
+    ) -> SandboxResult:
+        """Run arbitrary command confined inside the active sandbox."""
+        start_t = time.time()
+        res = self.backend.exec(session_id, command, cwd=cwd, env=env, timeout=timeout, input=input)
+        duration = time.time() - start_t
+
+        # Update session metrics in repository
+        actions = self.repository.get_actions_for_sandbox(session_id)
+        total_a = len(actions)
+        allowed_a = sum(1 for a in actions if a["allowed"])
+        blocked_a = sum(1 for a in actions if not a["allowed"])
+        escalate_a = sum(1 for a in actions if a["final_decision"] == "ESCALATE")
+
+        self.repository.update_sandbox_session(
+            session_id=session_id,
+            duration_seconds=duration,
+            total_actions=total_a,
+            allowed_actions=allowed_a,
+            blocked_actions=blocked_a,
+            escalated_actions=escalate_a,
+        )
+        return res
+
+    def stop_session(self, session_id: str) -> bool:
+        """Stop sandbox execution and record terminal state."""
+        ok = self.backend.stop(session_id)
+        if ok:
+            self.repository.update_sandbox_session(session_id=session_id, status="STOPPED")
+        return ok
+
+    def destroy_session(self, session_id: str) -> bool:
+        """Clean up ephemeral mount points and sandbox resources."""
+        ok = self.backend.destroy(session_id)
+        if ok:
+            self.repository.update_sandbox_session(session_id=session_id, status="DESTROYED")
+        return ok

@@ -16,6 +16,7 @@ from drex_agent_firewall.persistence.repository import ActionRepository
 from drex_agent_firewall.schemas.config import FirewallConfig
 from drex_agent_firewall.schemas.decision import FinalDecision, FirewallDecision
 from drex_agent_firewall.sdk.client import DrexFirewall
+from drex_agent_firewall.cli.sandbox_cli import sandbox_group
 
 
 console = Console()
@@ -26,6 +27,9 @@ console = Console()
 def cli():
     """Drex Agent Firewall: Policy & Decision Firewall for Autonomous AI Agents."""
     pass
+
+
+cli.add_command(sandbox_group)
 
 
 @cli.command("health")
@@ -169,9 +173,11 @@ def policies_cmd():
 
 @cli.command("benchmark")
 @click.option("--redteam", is_flag=True, help="Run 220-scenario adversarial red-team benchmark")
+@click.option("--bypass", is_flag=True, help="Run 186-scenario hostile architectural bypass benchmark")
+@click.option("--isolation", is_flag=True, help="Run 100-scenario outer isolation and host escape benchmark")
 @click.option("--latency", is_flag=True, help="Run latency and throughput benchmark")
-def benchmark_cmd(redteam: bool, latency: bool):
-    """Run firewall benchmarks (baseline suite, red-team suite, or latency profile)."""
+def benchmark_cmd(redteam: bool, bypass: bool, isolation: bool, latency: bool):
+    """Run firewall benchmarks (baseline suite, red-team suite, bypass suite, or isolation suite)."""
     if latency:
         from drex_agent_firewall.benchmark.latency_benchmark import LatencyBenchmark
         console.print("\n[bold cyan]Running Latency & Throughput Benchmark...[/bold cyan]\n")
@@ -190,6 +196,28 @@ def benchmark_cmd(redteam: bool, latency: bool):
                 tp = str(v.get("throughput_ops_sec", "N/A"))
                 table.add_row(k, str(v["p50"]), str(v["p95"]), str(v["p99"]), str(v["mean"]), tp)
         console.print(table)
+        return
+
+    if isolation:
+        from benchmarks.isolation.runner import IsolationBenchmarkRunner
+        console.print("\n[bold cyan]Running 100-Scenario Drex Isolation & Host Escape Benchmark...[/bold cyan]\n")
+        iso_runner = IsolationBenchmarkRunner()
+        iso_results = iso_runner.run()
+        iso_runner.print_summary(iso_results)
+        if iso_results["high_impact_false_allows"] > 0:
+            console.print("[bold red]CRITICAL FAILURE: High-impact false allows detected in isolation suite![/bold red]")
+            sys.exit(1)
+        return
+
+    if bypass:
+        from benchmarks.firewall_bypass.runner import BypassBenchmarkRunner
+        console.print("\n[bold cyan]Running 186-Scenario Hostile Architectural Bypass Benchmark...[/bold cyan]\n")
+        bp_runner = BypassBenchmarkRunner()
+        bp_results = bp_runner.run()
+        bp_runner.print_summary(bp_results)
+        if bp_results["high_impact_false_allows"] > 0:
+            console.print("[bold red]CRITICAL FAILURE: High-impact false allows detected in bypass suite![/bold red]")
+            sys.exit(1)
         return
 
     if redteam:

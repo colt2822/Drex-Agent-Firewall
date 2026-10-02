@@ -288,7 +288,45 @@ def create_app(firewall: Optional[DrexFirewall] = None) -> FastAPI:
                 ]
             }
 
-    # 7. Static files and Web UI
+    # 7. Sandbox Management Endpoints
+    @app.get("/v1/sandbox/status", tags=["Sandbox"])
+    def get_sandbox_status() -> Dict[str, Any]:
+        from drex_agent_firewall.sandbox.factory import get_isolation_backend
+        backend = get_isolation_backend("auto")
+        return {
+            "backend_name": backend.name,
+            "is_available": backend.is_available(),
+            "isolation_active": backend.is_available(),
+        }
+
+    @app.get("/v1/sandbox/sessions", tags=["Sandbox"])
+    def list_sandbox_sessions(limit: int = 50) -> Dict[str, Any]:
+        if not fw.repository:
+            return {"sandbox_sessions": []}
+        return {"sandbox_sessions": fw.repository.list_sandbox_sessions(limit=limit)}
+
+    @app.get("/v1/sandbox/sessions/{session_id}", tags=["Sandbox"])
+    def get_sandbox_session(session_id: str) -> Dict[str, Any]:
+        if not fw.repository:
+            raise HTTPException(status_code=404, detail="Repository not initialized")
+        sess = fw.repository.get_sandbox_session(session_id)
+        if not sess:
+            raise HTTPException(status_code=404, detail=f"Sandbox session {session_id} not found")
+        actions = fw.repository.get_actions_for_sandbox(session_id)
+        return {"session": sess, "actions": actions}
+
+    @app.post("/v1/sandbox/test-escape", tags=["Sandbox"])
+    def test_sandbox_escape() -> Dict[str, Any]:
+        from drex_agent_firewall.sandbox.manager import SandboxManager
+        from drex_agent_firewall.sandbox.probes import SandboxEscapeProbeRunner
+        mgr = SandboxManager()
+        info = mgr.create_session(workspace_path=".", policy_pack="safe-local-coding")
+        runner = SandboxEscapeProbeRunner(mgr)
+        results = runner.run_all_probes(info.session_id)
+        mgr.destroy_session(info.session_id)
+        return {"session_id": info.session_id, "backend": info.backend_name, "probes": results}
+
+    # 8. Static files and Web UI
     static_dir = Path(__file__).parent.parent / "web" / "static"
     templates_dir = Path(__file__).parent.parent / "web" / "templates"
     if static_dir.exists():

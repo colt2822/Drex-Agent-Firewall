@@ -56,3 +56,4 @@ drex_firewall.db*
 trace_output/
 logs/
 scratch/
+.drex_mcp_config.json
