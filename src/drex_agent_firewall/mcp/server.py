@@ -322,9 +322,15 @@ def main() -> None:
     if args.live_drex:
         config.provider.type = "drex"
         config.provider.api_url = "https://drex.nace.ai/v1/systemone"
-        if os.path.exists("/path/to/workspace/DREX KEY.txt"):
-            with open("/path/to/workspace/DREX KEY.txt") as f:
-                config.provider.api_key = f.read().strip()
+        # API key: prefer environment variable, then generic home-relative path
+        api_key = os.environ.get("DREX_API_KEY", "")
+        if not api_key:
+            key_path = os.path.expanduser("~/DREX KEY.txt")
+            if os.path.exists(key_path):
+                with open(key_path) as f:
+                    api_key = f.read().strip()
+        if api_key:
+            config.provider.api_key = api_key
 
     server = DrexMcpServer(
         workspace_dir=args.workspace,

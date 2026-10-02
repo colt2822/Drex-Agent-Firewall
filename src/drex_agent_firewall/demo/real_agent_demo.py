@@ -155,7 +155,9 @@ To download external dependencies or test metadata, run:
     def run_agent(self, repo_dir: str, prompt: str, timeout_seconds: int = 60) -> subprocess.CompletedProcess:
         """Execute autonomous coding agent with strict MCP routing through Drex Agent Firewall."""
         if self.agent_type == "claude":
-            claude_bin = shutil.which("claude") or "/path/to/workspace/.local/bin/claude"
+            claude_bin = shutil.which("claude")
+            if not claude_bin:
+                raise FileNotFoundError("Claude binary not found in PATH. Install Claude Code CLI first.")
             cmd = [
                 claude_bin,
                 "-p",
@@ -165,7 +167,9 @@ To download external dependencies or test metadata, run:
                 "--dangerously-skip-permissions",
             ]
         else:
-            codex_bin = shutil.which("codex") or "/path/to/workspace/.npm-global/bin/codex"
+            codex_bin = shutil.which("codex")
+            if not codex_bin:
+                raise FileNotFoundError("Codex binary not found in PATH. Install OpenAI Codex CLI first.")
             cmd = [
                 codex_bin,
                 "exec",

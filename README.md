@@ -213,18 +213,24 @@ HOST ENVIRONMENT
 │                                                        │
 │  • Writable /workspace mount only                      │
 │  • Ephemeral isolated /home/agent                      │
-│  • Zero host credential inheritance                    │
+│  • Ambient host credentials not inherited             │
 │  • Deny direct network egress by default               │
 │  • Dropped kernel capabilities (CAP_DROP ALL)          │
 │  • Die-with-parent lifecycle supervision               │
 └────────────────────────────────────────────────────────┘
 ```
 
-### Key Guarantees
+### Security Properties
 - **Host `$HOME` Isolated**: The host home directory (`~`) is never mounted. The agent runs with an isolated ephemeral tmpfs at `/home/agent`.
-- **Zero Host Credential Leakage**: Environment is wiped (`--clearenv`). Secrets (`GITHUB_TOKEN`, `AWS_*`, `OPENAI_API_KEY`, `SSH_AUTH_SOCK`) are purged.
+- **Ambient Environment Cleared**: Host environment is wiped (`--clearenv`). Ambient secrets (`GITHUB_TOKEN`, `AWS_*`, `OPENAI_API_KEY`, `SSH_AUTH_SOCK`) are not inherited. Narrow runtime credentials (e.g., Claude CLI token) are injected only when required for the specified agent type, are scoped to the sandbox session, and are destroyed on cleanup.
 - **Rootless & Unprivileged**: Runs via unprivileged user namespaces (`bwrap` bubblewrap), drops all 38 Linux capabilities (`CAP_DROP ALL`), and forbids setuid.
 - **Docker Socket Blocked**: Daemon sockets (`/var/run/docker.sock`) are inaccessible, neutralizing container-breakout vectors.
+
+### Limitations
+- Bubblewrap **shares the host Linux kernel**. It is not a microVM, hypervisor, or formal verification boundary.
+- **No cgroup-based resource limits** are enforced by Bubblewrap alone. Timeout enforcement and output truncation provide partial mitigation.
+- The `allowlisted` network mode does not yet implement fine-grained veth/iptables egress filtering; it currently falls back to full network isolation.
+- `~/.local` is mounted read-only as `/opt/agent_tools` and may expose cached application data beyond binaries.
 
 ### Commands
 ```bash
@@ -252,7 +258,7 @@ Pre-configured, standardized security profiles tailored to operational contexts:
 
 1. **`safe-local-coding`**: Default developer profile allowing workspace edits and local testing while blocking secrets, force-pushes, and host wipes.
 2. **`github-contributor`**: PR contributor bot profile allowing branch workflows while forbidding remote deletions and unauthorized merges.
-3. **`read-only-research`**: Zero-mutation profile mathematically guaranteeing zero filesystem modifications or external writes.
+3. **`read-only-research`**: Zero-mutation profile that deterministically blocks all filesystem modifications and external writes in the current rule set.
 4. **`autonomous-ci`**: Bounded unattended CI runner profile with strict runtime and memory caps.
 5. **`production-ops`**: High-assurance ops profile requiring $\ge 95\%$ confidence for mutations and human approval for releases.
 6. **`paranoid`**: Zero-trust air-gapped posture requiring explicit human escalation for any filesystem write or shell process.

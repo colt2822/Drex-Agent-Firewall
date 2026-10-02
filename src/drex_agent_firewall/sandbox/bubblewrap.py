@@ -99,9 +99,23 @@ class BubblewrapBackend(IsolationBackend):
         real_workspace = os.path.realpath(spec.workspace_path)
         real_home = os.path.realpath(os.path.expanduser("~"))
 
-        # Strictly prevent exposing root or host home
+        # Strictly prevent exposing root or host home as workspace
         if not spec.expose_host_root and real_workspace == "/":
             raise ValueError("Refusing to mount host root '/' as sandbox workspace")
+
+        if not spec.expose_host_home and real_workspace == real_home:
+            raise ValueError(
+                f"Refusing to mount host home directory '{real_home}' as sandbox workspace. "
+                "Use a subdirectory or set expose_host_home=True explicitly."
+            )
+
+        # Prevent symlink-supplied workspace paths that resolve to sensitive locations
+        sensitive_prefixes = ["/root", "/etc", "/var/run", "/run", "/proc", "/sys", "/dev"]
+        for prefix in sensitive_prefixes:
+            if real_workspace == prefix or real_workspace.startswith(prefix + "/"):
+                raise ValueError(
+                    f"Refusing to mount sensitive system path '{real_workspace}' as sandbox workspace"
+                )
 
         # Create ephemeral session directory
         session_tmp = f"/tmp/drex_sandbox_{spec.session_id}"
@@ -119,26 +133,57 @@ class BubblewrapBackend(IsolationBackend):
         # Create session bin directory with wrappers
         session_bin = os.path.join(session_tmp, "bin")
         os.makedirs(session_bin, exist_ok=True)
-        host_claude_version = "/path/to/workspace/.local/share/claude/versions/2.1.287"
-        if not os.path.exists(host_claude_version):
-            real_claude = shutil.which("claude")
-            if real_claude:
-                host_claude_version = os.path.realpath(real_claude)
-        if os.path.exists(host_claude_version):
+        # Discover Claude binary dynamically (no hardcoded personal paths)
+        real_claude = shutil.which("claude")
+        host_claude_path = None
+        if real_claude:
+            host_claude_path = os.path.realpath(real_claude)
+        else:
+            # Check common user-local installation path
+            user_claude_dir = os.path.expanduser("~/.local/share/claude/versions")
+            if os.path.isdir(user_claude_dir):
+                versions = sorted(os.listdir(user_claude_dir), reverse=True)
+                for v in versions:
+                    candidate = os.path.join(user_claude_dir, v)
+                    if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                        host_claude_path = candidate
+                        break
+        if host_claude_path and os.path.exists(host_claude_path):
+            # Resolve the in-sandbox path relative to /opt/agent_tools mount
+            user_local = os.path.expanduser("~/.local")
+            if host_claude_path.startswith(user_local):
+                sandbox_claude_path = "/opt/agent_tools" + host_claude_path[len(user_local):]
+            else:
+                sandbox_claude_path = host_claude_path
             claude_wrapper = os.path.join(session_bin, "claude")
             with open(claude_wrapper, "w") as f:
-                f.write("#!/bin/bash\nexec /opt/agent_tools/share/claude/versions/2.1.287 \"$@\"\n")
+                f.write(f"#!/bin/bash\nexec {sandbox_claude_path} \"$@\"\n")
             os.chmod(claude_wrapper, 0o755)
 
-        # Copy claude credentials into ephemeral agent_home if available
-        claude_creds = os.path.expanduser("~/.claude/.credentials.json")
-        claude_json = os.path.expanduser("~/.claude.json")
-        if os.path.exists(claude_creds):
-            agent_claude_dir = os.path.join(agent_home, ".claude")
-            os.makedirs(agent_claude_dir, exist_ok=True)
-            shutil.copy(claude_creds, os.path.join(agent_claude_dir, ".credentials.json"))
-        if os.path.exists(claude_json):
-            shutil.copy(claude_json, os.path.join(agent_home, ".claude.json"))
+        # Runtime credential injection: narrowly scoped, opt-in, documented
+        # WHY: Claude Code requires its authentication token to function
+        # WHAT: Claude CLI session credential (API access for the agent's execution)
+        # HOW LONG: Ephemeral — destroyed with sandbox session tmpdir
+        # SCOPE: Only injected when agent_type is 'claude' and credentials exist
+        # NOT: host environment variables, not persisted to SQLite, not logged
+        if spec.agent_type == "claude":
+            claude_creds = os.path.expanduser("~/.claude/.credentials.json")
+            claude_json = os.path.expanduser("~/.claude.json")
+            injected_creds = []
+            if os.path.exists(claude_creds):
+                agent_claude_dir = os.path.join(agent_home, ".claude")
+                os.makedirs(agent_claude_dir, exist_ok=True)
+                shutil.copy(claude_creds, os.path.join(agent_claude_dir, ".credentials.json"))
+                injected_creds.append(".claude/.credentials.json")
+            if os.path.exists(claude_json):
+                shutil.copy(claude_json, os.path.join(agent_home, ".claude.json"))
+                injected_creds.append(".claude.json")
+            if injected_creds:
+                logger.info(
+                    "Sandbox %s: injected %d narrow runtime credential(s) for Claude agent: %s "
+                    "(ephemeral, destroyed with session)",
+                    spec.session_id, len(injected_creds), ", ".join(injected_creds),
+                )
 
         self._sessions[spec.session_id] = {
             "spec": spec,
@@ -161,22 +206,59 @@ class BubblewrapBackend(IsolationBackend):
         args.extend(["--unshare-user", "--unshare-pid", "--unshare-ipc", "--unshare-uts"])
         args.extend(["--cap-drop", "ALL"])
 
-        # Network Isolation
+        # Network Isolation — always unshare network namespace
         if spec.network_mode in ("none", "firewall-only"):
             args.append("--unshare-net")
+        elif spec.network_mode == "allowlisted":
+            # Always isolate network; allowlisted mode requires additional veth/iptables
+            # configuration not yet implemented — log and proceed with isolation
+            args.append("--unshare-net")
+            logger.warning(
+                "Sandbox %s: network_mode='allowlisted' requested but fine-grained egress "
+                "filtering (veth + iptables) is not yet implemented. Network is fully isolated. "
+                "The agent may not be able to reach external services.",
+                spec.session_id if hasattr(spec, 'session_id') else 'unknown',
+            )
+        elif spec.network_mode == "host":
+            # Explicit host network — user has deliberately opted out of network isolation
+            logger.warning(
+                "Sandbox %s: network_mode='host' — network namespace NOT isolated. "
+                "Agent has full host network access.",
+                spec.session_id if hasattr(spec, 'session_id') else 'unknown',
+            )
+        else:
+            # Unknown mode — fail closed with isolation
+            args.append("--unshare-net")
 
-        # Standard OS Read-Only System Mounts
+        # Standard OS Read-Only System Mounts (binaries/libraries only, NOT /etc)
         system_ro_dirs = [
             "/usr",
             "/bin",
             "/sbin",
             "/lib",
             "/lib64",
-            "/etc",
         ]
         for d in system_ro_dirs:
             if os.path.exists(d):
                 args.extend(["--ro-bind", d, d])
+
+        # Selective /etc mounts — only required configuration, not full host /etc
+        etc_required_files = [
+            "/etc/ssl",             # CA certificates for TLS
+            "/etc/ca-certificates", # CA certificate bundles
+            "/etc/pki",             # PKI on RHEL-based systems
+            "/etc/resolv.conf",     # DNS resolution (needed even in isolated net for local resolution)
+            "/etc/nsswitch.conf",   # Name service switch configuration
+            "/etc/hosts",           # Host resolution (sandbox may override)
+            "/etc/ld.so.conf",      # Dynamic linker configuration
+            "/etc/ld.so.conf.d",    # Dynamic linker configuration directory
+            "/etc/ld.so.cache",     # Dynamic linker cache
+            "/etc/localtime",       # Timezone
+            "/etc/alternatives",    # Debian alternatives system (for python3 etc)
+        ]
+        for f in etc_required_files:
+            if os.path.exists(f):
+                args.extend(["--ro-bind", f, f])
 
         # If network is enabled, mount resolv.conf target
         if spec.network_mode not in ("none", "firewall-only"):

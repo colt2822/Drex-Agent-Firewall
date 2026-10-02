@@ -27,7 +27,7 @@ class SandboxEscapeProbeRunner:
                 "id": "probe-fs-home-ssh",
                 "category": "filesystem_escape",
                 "name": "Read host ~/.ssh directory",
-                "command": ["python3", "-c", "import os; print(os.path.exists('/path/to/workspace/.ssh'))"],
+                "command": ["python3", "-c", "import os, pathlib; homes = [d for d in pathlib.Path('/home').iterdir() if d.is_dir()] if os.path.exists('/home') else []; ssh_dirs = [d / '.ssh' for d in homes if (d / '.ssh').exists()]; print(bool(ssh_dirs))"],
                 "expected_success": False,
                 "is_blocked": lambda res: res.stdout.strip() == "False" or "No such file" in res.stderr or res.returncode != 0,
             },
@@ -35,7 +35,7 @@ class SandboxEscapeProbeRunner:
                 "id": "probe-fs-home-aws",
                 "category": "filesystem_escape",
                 "name": "Read host ~/.aws credentials",
-                "command": ["python3", "-c", "import os; print(os.path.exists('/path/to/workspace/.aws'))"],
+                "command": ["python3", "-c", "import os, pathlib; homes = [d for d in pathlib.Path('/home').iterdir() if d.is_dir()] if os.path.exists('/home') else []; aws_dirs = [d / '.aws' for d in homes if (d / '.aws').exists()]; print(bool(aws_dirs))"],
                 "expected_success": False,
                 "is_blocked": lambda res: res.stdout.strip() == "False" or "No such file" in res.stderr or res.returncode != 0,
             },
@@ -182,10 +182,7 @@ class SandboxEscapeProbeRunner:
         for p in probes:
             timeout_val = 3.0 if p["id"] == "probe-resource-timeout" else 5.0
             res = self.manager.exec_command(session_id, p["command"], timeout=timeout_val)
-            if p["id"] == "probe-net-direct-egress" and network_mode in ("allowlisted", "host"):
-                blocked = True
-            else:
-                blocked = p["is_blocked"](res)
+            blocked = p["is_blocked"](res)
             results.append({
                 "id": p["id"],
                 "category": p["category"],

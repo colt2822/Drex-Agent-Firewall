@@ -120,11 +120,12 @@ class LatencyBenchmark:
 
     def benchmark_live_drex(self, max_requests: int = 5) -> Dict[str, Any]:
         """Measure live Drex API provider latency over HTTPS (bounded count)."""
-        api_key = None
-        key_path = "/path/to/workspace/DREX KEY.txt"
-        if os.path.exists(key_path):
-            with open(key_path) as f:
-                api_key = f.read().strip()
+        api_key = os.environ.get("DREX_API_KEY", "")
+        if not api_key:
+            key_path = os.path.expanduser("~/DREX KEY.txt")
+            if os.path.exists(key_path):
+                with open(key_path) as f:
+                    api_key = f.read().strip()
 
         if not api_key:
             return {"status": "skipped", "reason": "No live Drex API key available"}

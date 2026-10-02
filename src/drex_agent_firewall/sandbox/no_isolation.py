@@ -21,10 +21,14 @@ class NoIsolationBackend(IsolationBackend):
     
     WARNING: Does not prevent direct host POSIX bypasses. Provided exclusively
     for performance baseline benchmarking and comparison against isolated runtimes.
+    This is NOT a sandbox. It must never be silently selected when sandbox mode
+    is requested.
     """
 
     def __init__(self):
         self._sessions: Dict[str, Dict[str, Any]] = {}
+        import logging
+        self._logger = logging.getLogger(__name__)
 
     @property
     def name(self) -> str:
@@ -45,6 +49,17 @@ class NoIsolationBackend(IsolationBackend):
         if spec.session_id not in self._sessions:
             self.prepare(spec)
         self._sessions[spec.session_id]["status"] = SandboxStatus.RUNNING
+
+        # Explicit visible warning — this is NOT isolated
+        import sys
+        warning_msg = (
+            "\n⚠️  WARNING: NoIsolationBackend active — agent is executing directly on the host "
+            "with NO kernel-level isolation. This mode is for development/benchmarking only. "
+            "Do NOT use for untrusted agents or production workloads.\n"
+        )
+        self._logger.warning(warning_msg.strip())
+        print(warning_msg, file=sys.stderr, flush=True)
+
         return SandboxSessionInfo(
             session_id=spec.session_id,
             backend_name=self.name,

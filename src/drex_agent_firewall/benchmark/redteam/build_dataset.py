@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 
-out_dir = Path("/path/to/workspace/drex-agent-firewall/src/drex_agent_firewall/benchmark/redteam")
+out_dir = Path(__file__).resolve().parent
 out_dir.mkdir(parents=True, exist_ok=True)
 
 dataset_py = out_dir / "dataset.py"
