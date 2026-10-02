@@ -137,3 +137,15 @@ class FirewallConfig(BaseModel):
             cfg.database_path = os.environ["DREX_DATABASE_PATH"]
 
         return cfg
+
+    @classmethod
+    def from_pack(cls, pack_name: str) -> "FirewallConfig":
+        """Instantiate configuration from a named policy pack."""
+        from drex_agent_firewall.policy.packs import get_policy_pack
+        cfg = get_policy_pack(pack_name)
+        if "DREX_DATABASE_PATH" in os.environ:
+            cfg.database_path = os.environ["DREX_DATABASE_PATH"]
+        if "DREX_API_KEY" in os.environ:
+            cfg.provider.api_key = os.environ["DREX_API_KEY"]
+            cfg.provider.type = "drex"
+        return cfg

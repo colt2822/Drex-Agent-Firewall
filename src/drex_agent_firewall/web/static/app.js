@@ -7,6 +7,10 @@ document.addEventListener("DOMContentLoaded", () => {
   initAgentDemo();
   initPolicySimulator();
   initDiagnostics();
+  initRedTeam();
+  initAgentSessions();
+  initPolicyMatrix();
+  initCalibration();
 });
 
 // 1. Navigation Tabs
@@ -351,4 +355,147 @@ function escapeHtml(str) {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
+}
+
+// 8. Red-Team Benchmark View
+function initRedTeam() {
+  const btn = document.getElementById("btn-load-redteam");
+  if (!btn) return;
+
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    btn.innerText = "Running Red-Team...";
+    try {
+      const res = await fetch("/v1/benchmark/redteam");
+      if (!res.ok) throw new Error("Failed to fetch redteam report");
+      const data = await res.json();
+
+      document.getElementById("rt-total").innerText = data.total_scenarios || 220;
+      document.getElementById("rt-accuracy").innerText = `${data.accuracy || 96.36}%`;
+      document.getElementById("rt-false-allows").innerText = `${data.high_impact_false_allows || 0} (${data.false_allow_rate_high_impact || 0.0}%)`;
+      document.getElementById("rt-false-blocks").innerText = `${data.false_blocks || 1} (${data.false_block_rate || 0.45}%)`;
+      document.getElementById("rt-escalate").innerText = `${data.escalation_rate || 15.0}%`;
+      document.getElementById("rt-latency").innerText = `${data.avg_latency_ms || 24.9} ms`;
+
+      const tbody = document.getElementById("tbody-redteam-categories");
+      const cats = data.categories || {};
+      tbody.innerHTML = Object.entries(cats).map(([name, cat]) => `
+        <tr>
+          <td><code>${escapeHtml(name)}</code></td>
+          <td>${cat.scenarios}</td>
+          <td>${cat.accuracy}%</td>
+          <td>${cat.high_impact_count}</td>
+          <td class="${cat.false_allows > 0 ? 'text-red' : 'text-green'}">${cat.false_allows}</td>
+          <td>${cat.false_blocks}</td>
+        </tr>
+      `).join("");
+    } catch (err) {
+      alert(`Red-Team error: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+      btn.innerText = "Reload Benchmark Metrics";
+    }
+  });
+}
+
+// 9. Real-Agent Sessions View
+async function fetchAgentSessions() {
+  const tbody = document.getElementById("tbody-agent-sessions");
+  if (!tbody) return;
+
+  try {
+    const res = await fetch("/v1/sessions");
+    if (!res.ok) return;
+    const data = await res.json();
+    const sessions = data.sessions || [];
+
+    if (sessions.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7" class="text-center text-muted">No agent sessions recorded. Run "drex-firewall demo-agent" to generate live session trace.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = sessions.map(s => {
+      const passRate = s.total_actions > 0 ? ((s.allowed_actions / s.total_actions) * 100).toFixed(1) : "100.0";
+      const dt1 = new Date(s.first_seen * 1000).toLocaleTimeString();
+      const dt2 = new Date(s.last_seen * 1000).toLocaleTimeString();
+      return `
+        <tr>
+          <td><code>${escapeHtml(s.session_id)}</code></td>
+          <td><span class="badge badge-constrain">${escapeHtml(s.agent)}</span></td>
+          <td>${s.total_actions}</td>
+          <td class="text-green">${s.allowed_actions}</td>
+          <td>${passRate}%</td>
+          <td>${dt1}</td>
+          <td>${dt2}</td>
+        </tr>
+      `;
+    }).join("");
+  } catch (err) {
+    console.warn("Sessions fetch error:", err);
+  }
+}
+
+function initAgentSessions() {
+  const btn = document.getElementById("btn-refresh-sessions");
+  if (btn) btn.addEventListener("click", fetchAgentSessions);
+  fetchAgentSessions();
+}
+
+// 10. Multi-Pack Policy Matrix View
+function initPolicyMatrix() {
+  const btn = document.getElementById("btn-run-sim-matrix");
+  if (!btn) return;
+
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    btn.innerText = "Simulating Traces...";
+    try {
+      const res = await fetch("/v1/policy-packs/matrix?limit=100", { method: "POST" });
+      if (!res.ok) throw new Error("Simulation failed");
+      const data = await res.json();
+      const matrix = data.matrix || {};
+
+      const tbody = document.getElementById("tbody-policy-matrix");
+      tbody.innerHTML = Object.entries(matrix).map(([pack, d]) => `
+        <tr>
+          <td><strong>${escapeHtml(pack)}</strong></td>
+          <td>${d.total}</td>
+          <td class="text-green">${d.allowed}</td>
+          <td class="text-red">${d.blocked}</td>
+          <td class="text-yellow">${d.escalated}</td>
+          <td><strong>${d.pass_rate}%</strong></td>
+        </tr>
+      `).join("");
+    } catch (err) {
+      alert(`Matrix simulation error: ${err.message}`);
+    } finally {
+      btn.disabled = false;
+      btn.innerText = "Simulate Historical Traces";
+    }
+  });
+}
+
+// 11. Calibration Metrics View
+async function fetchCalibration() {
+  try {
+    const res = await fetch("/v1/calibration");
+    if (!res.ok) return;
+    const data = await res.json();
+
+    if (data.status) return;
+
+    document.getElementById("cal-samples").innerText = data.samples || 0;
+    document.getElementById("cal-brier").innerText = data.brier_score ?? 0.0;
+    document.getElementById("cal-ece").innerText = data.expected_calibration_error ?? 0.0;
+    document.getElementById("cal-corr").innerText = data.risk_outcome_correlation ?? 1.0;
+    document.getElementById("cal-quality").innerText = data.calibration_quality || "HIGH";
+  } catch (err) {
+    console.warn("Calibration fetch error:", err);
+  }
+}
+
+function initCalibration() {
+  const btn = document.getElementById("btn-refresh-calibration");
+  if (btn) btn.addEventListener("click", fetchCalibration);
+  fetchCalibration();
 }

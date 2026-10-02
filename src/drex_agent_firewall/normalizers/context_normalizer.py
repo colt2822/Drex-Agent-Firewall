@@ -53,6 +53,7 @@ class ContextNormalizer:
         session_id: str = "default-session",
         parent_action_id: Optional[str] = None,
         trace_id: Optional[str] = None,
+        action_id: Optional[str] = None,
     ) -> ActionEnvelope:
         """Construct a validated, normalized, and sanitized ActionEnvelope."""
         ctx = context or {}
@@ -201,13 +202,46 @@ class ContextNormalizer:
             mcp_tool_name = str(arguments.get("tool_name") or operation)
             resource_target = mcp_tool_name
             op_check = f"{op_lower} {mcp_tool_name.lower()}"
-            if any(k in op_check for k in ["read", "list", "get", "status", "view", "fetch"]):
+            if any(k in op_check for k in ["pull_request", "create_pr", "merge", "issue", "comment", "publish"]):
+                external_write = True
+                external_effect = True
+            elif any(k in op_check for k in ["read", "list", "get", "status", "view", "fetch", "search", "check", "diff", "test", "lint", "calc", "math"]):
                 read_only = True
             elif any(k in op_check for k in ["delete", "remove", "unlink"]):
                 destructive = True
                 filesystem_write = True
-            elif any(k in op_check for k in ["write", "modify", "create", "edit", "update"]):
+            elif any(k in op_check for k in ["write", "modify", "create", "edit", "update", "format"]):
                 filesystem_write = True
+
+            # Inspect embedded MCP arguments for files, commands, and network URLs
+            path_arg = arguments.get("path") or arguments.get("file_path") or arguments.get("uri")
+            if path_arg:
+                clean_p = str(path_arg)
+                if clean_p.startswith("file://"):
+                    clean_p = clean_p[7:]
+                resource_target = clean_p
+                resource_type = "file"
+                if any(sec_path in clean_p for sec_path in SECRET_PATH_KEYWORDS + ["passwd", "shadow"]):
+                    credential_access = True
+
+            cmd_arg = arguments.get("command") or arguments.get("cmd")
+            if cmd_arg:
+                process_execution = True
+                resource_type = "command"
+                resource_target = str(cmd_arg)
+                if any(secret_kw in str(cmd_arg) for secret_kw in SECRET_PATH_KEYWORDS + ["passwd", "shadow"]):
+                    credential_access = True
+                for pat in DESTRUCTIVE_COMMANDS:
+                    if re.search(pat, str(cmd_arg)):
+                        destructive = True
+                        reversible = False
+                        break
+
+            url_arg = arguments.get("url")
+            if url_arg:
+                network_access = True
+                resource_type = "url"
+                resource_target = str(url_arg)
 
 
         envelope_data: Dict[str, Any] = {
@@ -247,5 +281,7 @@ class ContextNormalizer:
 
         if trace_id:
             envelope_data["trace_id"] = trace_id
+        if action_id:
+            envelope_data["action_id"] = action_id
 
         return ActionEnvelope(**envelope_data)

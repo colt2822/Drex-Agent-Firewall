@@ -80,13 +80,17 @@ class ReplayProvider(BaseDecisionProvider):
             ac_weights = {"AUTH": 0.96, "READ": 0.02, "NETWORK": 0.01, "EXECUTE": 0.005, "WRITE": 0.005}
         elif env.network_access or tool == "http" or "curl" in cmd or "wget" in cmd:
             ac_weights = {"NETWORK": 0.95, "READ": 0.03, "EXECUTE": 0.01, "EXTERNAL_PUBLISH": 0.01}
-        elif tool == "github" and op in {"create_issue", "create_pr", "merge", "comment", "update_pr", "close", "label"}:
+        elif tool == "github" and op in {"create_issue", "create_pr", "merge", "comment", "update_pr", "close", "label", "create_release", "delete_ref"}:
             ac_weights = {"EXTERNAL_PUBLISH": 0.98, "WRITE": 0.01, "NETWORK": 0.01}
         elif env.destructive or "rm -rf" in cmd or op in {"delete", "clean"}:
             ac_weights = {"DELETE": 0.99, "EXECUTE": 0.005, "WRITE": 0.005}
-        elif env.filesystem_write or op in {"write", "modify", "edit_file", "commit", "create", "mkdir", "rename", "add"}:
+        elif env.filesystem_write or op in {"write", "modify", "edit_file", "commit", "create", "mkdir", "rename", "add", "format_files"}:
             ac_weights = {"WRITE": 0.96, "EXECUTE": 0.02, "READ": 0.02}
-        elif env.read_only or op in {"read", "status", "diff", "log", "cat", "list_dir", "branch"}:
+        elif env.read_only or op in {
+            "read", "status", "diff", "log", "cat", "list_dir", "branch", "tag",
+            "get_file", "search", "read_issue", "read_pr", "list_issues", "list_prs",
+            "search_code", "lint_files", "run_tests", "git_status", "git_diff", "read_file", "list_directory"
+        }:
             ac_weights = {"READ": 0.98, "EXECUTE": 0.01, "WRITE": 0.01}
         elif env.process_execution or tool == "shell":
             ac_weights = {"EXECUTE": 0.95, "READ": 0.03, "WRITE": 0.02}
@@ -104,10 +108,23 @@ class ReplayProvider(BaseDecisionProvider):
         is_credential_leak = env.credential_access and (env.network_access or "post" in op or "curl" in cmd or tool == "http")
         is_force_push = "push" in op and ("--force" in cmd or "-f" in cmd or "+ref" in cmd or "+master" in cmd or env.arguments.get("force"))
 
+        is_operational_high_impact = any(
+            k in cmd
+            for k in [
+                "deploy", "terraform", "kubectl", "alembic", "docker system prune",
+                "aws ec2", "vault token", "./bin/", "custom_deploy"
+            ]
+        ) or (tool == "shell" and "/tmp/" in cmd) or any(
+            k in op
+            for k in ["custom_deploy", "mutate_metadata"]
+        )
+
         if is_hard_destructive or is_credential_leak:
             risk_dist = {"CRITICAL": 0.98, "HIGH": 0.015, "MEDIUM": 0.004, "LOW": 0.001}
         elif env.destructive or is_force_push or "shadow" in cmd or "sudoers" in cmd or env.credential_access:
             risk_dist = {"CRITICAL": 0.15, "HIGH": 0.83, "MEDIUM": 0.015, "LOW": 0.005}
+        elif is_operational_high_impact:
+            risk_dist = {"CRITICAL": 0.05, "HIGH": 0.85, "MEDIUM": 0.09, "LOW": 0.01}
         elif env.external_write or (tool == "git" and op == "push"):
             risk_dist = {"CRITICAL": 0.01, "HIGH": 0.20, "MEDIUM": 0.77, "LOW": 0.02}
         elif env.filesystem_write or op in {"commit", "modify", "write", "create", "mkdir", "rename"}:
@@ -124,7 +141,7 @@ class ReplayProvider(BaseDecisionProvider):
         target = env.resource_target
         if env.blocked_paths and any(bp in target for bp in env.blocked_paths):
             scope_out = True
-        elif target.startswith("/etc") or target.startswith("/root") or "/../" in target:
+        elif target.startswith("/etc") or target.startswith("/root") or target.startswith("/var") or "/../" in target:
             scope_out = True
 
         if scope_out:
@@ -172,8 +189,11 @@ class ReplayProvider(BaseDecisionProvider):
         winning_cr = max(cr_dist, key=cr_dist.get)
 
         # 7. Destructive Risk
+        is_cache_deletion = op == "delete" and ".cache" in target
         if is_hard_destructive:
             dr_dist = {"HIGH": 0.99, "MODERATE": 0.005, "LOW": 0.004, "NONE": 0.001}
+        elif is_cache_deletion:
+            dr_dist = {"LOW": 0.90, "MODERATE": 0.08, "HIGH": 0.01, "NONE": 0.01}
         elif env.destructive or is_force_push:
             dr_dist = {"HIGH": 0.90, "MODERATE": 0.08, "LOW": 0.015, "NONE": 0.005}
         elif env.filesystem_write:
@@ -184,7 +204,13 @@ class ReplayProvider(BaseDecisionProvider):
         winning_dr = max(dr_dist, key=dr_dist.get)
 
         # 8. Needs Human Approval
-        if winning_risk in {"CRITICAL", "HIGH"} or is_force_push or (tool == "git" and op == "push") or env.credential_access:
+        if (
+            winning_risk in {"CRITICAL", "HIGH"}
+            or is_force_push
+            or (tool == "git" and op == "push")
+            or env.credential_access
+            or is_operational_high_impact
+        ):
             ha_dist = {"YES": 0.97, "UNCERTAIN": 0.02, "NO": 0.01}
         elif winning_risk == "MEDIUM" or env.external_write:
             ha_dist = {"YES": 0.65, "UNCERTAIN": 0.25, "NO": 0.10}

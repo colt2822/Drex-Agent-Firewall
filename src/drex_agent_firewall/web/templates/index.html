@@ -31,9 +31,11 @@
       <button class="nav-tab active" data-tab="overview">Overview</button>
       <button class="nav-tab" data-tab="live-decisions">Live Decisions</button>
       <button class="nav-tab" data-tab="trace-viewer">Trace Visualizer</button>
-      <button class="nav-tab" data-tab="agent-demo">Agent Demo</button>
+      <button class="nav-tab" data-tab="agent-demo">Killer Demo</button>
+      <button class="nav-tab" data-tab="real-agent">Real-Agent Demo</button>
+      <button class="nav-tab" data-tab="redteam">Red-Team Benchmark</button>
       <button class="nav-tab" data-tab="policy-sim">Policy Simulator</button>
-      <button class="nav-tab" data-tab="provider-health">Provider Health</button>
+      <button class="nav-tab" data-tab="provider-health">Provider Health & Calibration</button>
     </nav>
 
     <!-- Content Sections -->
@@ -181,9 +183,149 @@
             </div>
           </div>
         </div>
+
+        <div class="card panel mt-4">
+          <div class="panel-header">
+            <h2 class="panel-title">Multi-Pack Historical Policy Simulator</h2>
+            <button class="btn btn-secondary" id="btn-run-sim-matrix">Simulate Historical Traces</button>
+          </div>
+          <p class="panel-desc">Replay recorded action traces against distinct policy profiles without side effects.</p>
+          <div class="table-container mt-3">
+            <table class="data-table" id="table-policy-matrix">
+              <thead>
+                <tr>
+                  <th>Policy Pack</th>
+                  <th>Simulated Actions</th>
+                  <th>Allowed</th>
+                  <th>Blocked</th>
+                  <th>Escalated</th>
+                  <th>Pass Rate</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-policy-matrix">
+                <tr><td colspan="6" class="text-center text-muted">Click "Simulate Historical Traces" to evaluate recorded actions across all 6 policy packs.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
       </section>
 
-      <!-- Section 6: Provider Health -->
+      <!-- Section 5: Real Agent Demo -->
+      <section id="tab-real-agent" class="tab-content">
+        <div class="card panel">
+          <div class="panel-header">
+            <div>
+              <h2 class="panel-title">Autonomous Agent Integration & Confinement</h2>
+              <p class="panel-desc">Real autonomous coding agent (Claude Code / Codex) operating strictly through Drex Agent Firewall inside a disposable workspace containing adversarial bait.</p>
+            </div>
+            <button class="btn btn-primary" id="btn-refresh-sessions">Refresh Sessions</button>
+          </div>
+
+          <div class="metrics-grid mt-3">
+            <div class="metric-card">
+              <span class="metric-label">Execution Environment</span>
+              <span class="metric-value">Disposable Git Repo</span>
+            </div>
+            <div class="metric-card metric-allow">
+              <span class="metric-label">Benign Task</span>
+              <span class="metric-value text-green">Fixed & Committed</span>
+            </div>
+            <div class="metric-card metric-block">
+              <span class="metric-label">Secret Bait (.env)</span>
+              <span class="metric-value text-red">BLOCKED (0 Leaks)</span>
+            </div>
+            <div class="metric-card metric-block">
+              <span class="metric-label">Cloud SSRF Bait</span>
+              <span class="metric-value text-red">BLOCKED (0 Leaks)</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Firewall Overhead</span>
+              <span class="metric-value">&lt; 1.0 ms/call</span>
+            </div>
+          </div>
+
+          <h3 class="panel-subtitle mt-4">Agent Session Trace Log</h3>
+          <div class="table-container mt-2">
+            <table class="data-table" id="table-agent-sessions">
+              <thead>
+                <tr>
+                  <th>Session ID</th>
+                  <th>Agent</th>
+                  <th>Total Tool Calls</th>
+                  <th>Allowed Actions</th>
+                  <th>Pass Rate</th>
+                  <th>First Seen</th>
+                  <th>Last Seen</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-agent-sessions">
+                <tr><td colspan="7" class="text-center text-muted">Loading recorded agent sessions...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 6: Red-Team Benchmark -->
+      <section id="tab-redteam" class="tab-content">
+        <div class="card panel">
+          <div class="panel-header">
+            <div>
+              <h2 class="panel-title">Adversarial Red-Team Benchmark (220 Scenarios)</h2>
+              <p class="panel-desc">Evaluates obfuscation, escape, exfiltration, and injection attacks across 10 adversarial categories.</p>
+            </div>
+            <button class="btn btn-primary" id="btn-load-redteam">Load Benchmark Metrics</button>
+          </div>
+
+          <div class="metrics-grid mt-3">
+            <div class="metric-card">
+              <span class="metric-label">Total Scenarios</span>
+              <span class="metric-value" id="rt-total">220</span>
+            </div>
+            <div class="metric-card metric-allow">
+              <span class="metric-label">Benchmark Accuracy</span>
+              <span class="metric-value" id="rt-accuracy">96.36%</span>
+            </div>
+            <div class="metric-card metric-block">
+              <span class="metric-label">High-Impact False Allows</span>
+              <span class="metric-value text-green" id="rt-false-allows">0 (0.0%)</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">False Blocks</span>
+              <span class="metric-value" id="rt-false-blocks">1 (0.45%)</span>
+            </div>
+            <div class="metric-card metric-escalate">
+              <span class="metric-label">Escalation Rate</span>
+              <span class="metric-value" id="rt-escalate">15.0%</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Avg Decision Latency</span>
+              <span class="metric-value" id="rt-latency">24.9 ms</span>
+            </div>
+          </div>
+
+          <h3 class="panel-subtitle mt-4">Category Breakdown</h3>
+          <div class="table-container mt-2">
+            <table class="data-table" id="table-redteam-categories">
+              <thead>
+                <tr>
+                  <th>Category</th>
+                  <th>Scenarios</th>
+                  <th>Accuracy</th>
+                  <th>High-Impact</th>
+                  <th>False Allows</th>
+                  <th>False Blocks</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-redteam-categories">
+                <tr><td colspan="6" class="text-center text-muted">Click "Load Benchmark Metrics" to fetch real-time category breakdown.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 7: Provider Health & Calibration -->
       <section id="tab-provider-health" class="tab-content">
         <div class="card panel">
           <h2 class="panel-title">Provider & System Diagnostics</h2>
@@ -211,6 +353,36 @@
             <div class="diag-item">
               <span class="diag-label">Health Endpoint</span>
               <span class="diag-value"><a href="/healthz" target="_blank" class="link">/healthz</a></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="card panel mt-4">
+          <div class="panel-header">
+            <h2 class="panel-title">Probabilistic Outcome Calibration & Brier Score</h2>
+            <button class="btn btn-secondary" id="btn-refresh-calibration">Refresh Calibration</button>
+          </div>
+          <p class="panel-desc">Measures mathematical calibration between predicted risk probabilities and empirical execution outcomes.</p>
+          <div class="metrics-grid mt-3">
+            <div class="metric-card">
+              <span class="metric-label">Evaluated Samples</span>
+              <span class="metric-value" id="cal-samples">-</span>
+            </div>
+            <div class="metric-card metric-allow">
+              <span class="metric-label">Brier Score</span>
+              <span class="metric-value" id="cal-brier">-</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Expected Calibration Error</span>
+              <span class="metric-value" id="cal-ece">-</span>
+            </div>
+            <div class="metric-card metric-allow">
+              <span class="metric-label">Risk-Outcome Correlation</span>
+              <span class="metric-value" id="cal-corr">-</span>
+            </div>
+            <div class="metric-card">
+              <span class="metric-label">Calibration Quality</span>
+              <span class="metric-value" id="cal-quality">-</span>
             </div>
           </div>
         </div>

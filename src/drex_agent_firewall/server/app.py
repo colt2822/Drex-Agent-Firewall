@@ -241,7 +241,54 @@ def create_app(firewall: Optional[DrexFirewall] = None) -> FastAPI:
 
         return {"trace_id": trace_id, "steps": results}
 
-    # 6. Static files and Web UI
+    # 6. Advanced Analytics & Evaluation Endpoints
+    @app.get("/v1/benchmark/redteam", tags=["Benchmark"])
+    def get_redteam_benchmark() -> Dict[str, Any]:
+        from drex_agent_firewall.benchmark.redteam.runner import RedTeamRunner
+        runner = RedTeamRunner()
+        return runner.run()
+
+    @app.get("/v1/policy-packs", tags=["Policy"])
+    def list_policy_packs() -> Dict[str, Any]:
+        from drex_agent_firewall.policy.packs import POLICY_PACK_DESCRIPTIONS
+        return {"packs": POLICY_PACK_DESCRIPTIONS}
+
+    @app.post("/v1/policy-packs/matrix", tags=["Policy"])
+    def get_policy_matrix(limit: int = 100) -> Dict[str, Any]:
+        from drex_agent_firewall.policy.simulator import PolicySimulator
+        sim = PolicySimulator()
+        return {"matrix": sim.simulate_historical_traces(limit=limit, db_path=fw.config.database_path)}
+
+    @app.get("/v1/calibration", tags=["Benchmark"])
+    def get_calibration(limit: int = 500) -> Dict[str, Any]:
+        from drex_agent_firewall.benchmark.calibration import CalibrationEvaluator
+        cal = CalibrationEvaluator(db_path=fw.config.database_path)
+        return cal.evaluate_calibration(limit=limit)
+
+    @app.get("/v1/sessions", tags=["Audit"])
+    def list_sessions() -> Dict[str, Any]:
+        if not fw.repository:
+            return {"sessions": []}
+        with fw.repository._lock:
+            cur = fw.repository.conn.cursor()
+            rows = cur.execute(
+                "SELECT session_id, agent, COUNT(*) as total, SUM(allowed) as allowed, MIN(timestamp), MAX(timestamp) FROM audit_actions GROUP BY session_id ORDER BY MAX(timestamp) DESC LIMIT 20"
+            ).fetchall()
+            return {
+                "sessions": [
+                    {
+                        "session_id": r[0],
+                        "agent": r[1],
+                        "total_actions": r[2],
+                        "allowed_actions": r[3],
+                        "first_seen": r[4],
+                        "last_seen": r[5],
+                    }
+                    for r in rows
+                ]
+            }
+
+    # 7. Static files and Web UI
     static_dir = Path(__file__).parent.parent / "web" / "static"
     templates_dir = Path(__file__).parent.parent / "web" / "templates"
     if static_dir.exists():

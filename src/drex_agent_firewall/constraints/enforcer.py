@@ -49,29 +49,18 @@ class ConstraintEnforcer:
 
     @staticmethod
     def verify_network_domain(url_or_host: str, constraints: Constraints) -> str:
-        """Verify destination host complies with domain constraints."""
-        if "://" in url_or_host:
-            host = urlparse(url_or_host).hostname or ""
-        else:
-            host = url_or_host.split(":")[0]
+        """Verify destination host complies with domain constraints and SSRF rules."""
+        from drex_agent_firewall.security.network_validator import NetworkValidator
 
-        host_lower = host.lower()
-
-        # Denied domains
-        for denied in constraints.denied_domains:
-            if host_lower == denied.lower() or host_lower.endswith("." + denied.lower()):
-                raise ConstraintViolation(f"Domain '{host}' is in denied_domains constraint: {denied}")
-
-        # Allowed domains if configured
-        if constraints.allowed_domains:
-            matched = any(
-                host_lower == allowed.lower() or host_lower.endswith("." + allowed.lower())
-                for allowed in constraints.allowed_domains
-            )
-            if not matched:
-                raise ConstraintViolation(f"Domain '{host}' is not in allowed_domains constraint whitelist")
-
-        return host_lower
+        validator = NetworkValidator(
+            allowed_domains=constraints.allowed_domains,
+            blocked_domains=constraints.denied_domains,
+            block_private_ips=True,
+        )
+        is_safe, canonical_host, reason = validator.validate_destination(url_or_host)
+        if not is_safe:
+            raise ConstraintViolation(f"Constraint network violation: {reason}")
+        return canonical_host
 
     @staticmethod
     def verify_mutation(operation_is_write: bool, constraints: Constraints) -> None:

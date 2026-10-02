@@ -6,6 +6,7 @@ Never logs raw authorization tokens or secrets.
 
 from __future__ import annotations
 
+import json
 import time
 from typing import Any, Dict, Optional
 import httpx
@@ -47,6 +48,24 @@ class DrexProvider(BaseDecisionProvider):
 
     def _build_request_payload(self, envelope: ActionEnvelope) -> Dict[str, Any]:
         """Construct prompt/payload for Drex evaluation without secret exposure."""
+        if "/systemone" in self.api_url:
+            state = f"Tool: {envelope.tool}\nOperation: {envelope.operation}\nTarget: {envelope.resource_target}\nArguments: {json.dumps(envelope.arguments)}\nRead-only: {envelope.read_only}\nDestructive: {envelope.destructive}\nCredential access: {envelope.credential_access}\nNetwork access: {envelope.network_access}"
+            return {
+                "model": "drex-latest",
+                "state": state,
+                "questions": {
+                    "decision": {
+                        "type": "choice",
+                        "instructions": "Evaluate risk and safety of this proposed agent action",
+                        "criteria": {
+                            "allow_1": "allow benign coding action",
+                            "block_2": "block dangerous or harmful action",
+                            "escalate_3": "escalate ambiguous or high-risk action",
+                        },
+                    }
+                },
+            }
+
         return {
             "model": self.requested_model,
             "envelope": {
@@ -104,8 +123,67 @@ class DrexProvider(BaseDecisionProvider):
         resp_data: Dict[str, Any],
         resolved_model: str,
         latency_ms: float,
+        envelope: Optional[ActionEnvelope] = None,
     ) -> DrexEvaluationResult:
         """Parse structured classification response into DrexEvaluationResult."""
+        if "answers" in resp_data and "decision" in resp_data["answers"]:
+            ans = resp_data["answers"]["decision"]
+            choice = ans.get("choice", "escalate_3")
+            conf = float(ans.get("confidence", 0.90))
+            probs = ans.get("probabilities", {})
+
+            p_allow = float(probs.get("allow_1", 0.0))
+            p_block = float(probs.get("block_2", 0.0))
+            p_escalate = float(probs.get("escalate_3", 0.0))
+
+            if "allow" in choice:
+                risk = ActionRisk.LOW
+                needs_ha = NeedsHumanApproval.NO
+            elif "block" in choice:
+                risk = ActionRisk.HIGH
+                needs_ha = NeedsHumanApproval.YES
+            else:
+                risk = ActionRisk.MEDIUM
+                needs_ha = NeedsHumanApproval.YES
+
+            ac = ActionClass.READ
+            if envelope:
+                if envelope.filesystem_write:
+                    ac = ActionClass.WRITE
+                elif envelope.process_execution:
+                    ac = ActionClass.EXECUTE
+                elif envelope.network_access:
+                    ac = ActionClass.NETWORK
+
+            dist = FullProbabilityDistribution(
+                risk={"LOW": p_allow, "MEDIUM": p_escalate, "HIGH": p_block * 0.7, "CRITICAL": p_block * 0.3},
+                action_class={ac.value: conf},
+                scope_match={"IN_SCOPE": p_allow, "OUT_OF_SCOPE": p_block, "UNKNOWN": p_escalate},
+                reversibility={"FULLY_REVERSIBLE": p_allow, "PARTIALLY_REVERSIBLE": p_escalate, "IRREVERSIBLE": p_block},
+                external_effect={"LOCAL_ONLY": p_allow, "NONE": 0.0, "REMOTE_REVERSIBLE": p_escalate, "REMOTE_IRREVERSIBLE": p_block},
+                credential_risk={"NONE": 1.0 - p_block, "SECRET_TRANSMISSION": p_block},
+                destructive_risk={"NONE": p_allow, "LOW": p_escalate, "HIGH": p_block},
+                needs_human_approval={"NO": p_allow, "UNCERTAIN": p_escalate, "YES": p_block},
+            )
+
+            return DrexEvaluationResult(
+                provider="drex",
+                requested_model=self.requested_model,
+                resolved_model=resolved_model,
+                risk=risk,
+                action_class=ac,
+                scope_match=ScopeMatch.IN_SCOPE if "allow" in choice else ScopeMatch.OUT_OF_SCOPE,
+                reversibility=Reversibility.FULLY_REVERSIBLE if "allow" in choice else Reversibility.IRREVERSIBLE,
+                external_effect=ExternalEffect.LOCAL_ONLY if "allow" in choice else ExternalEffect.REMOTE_IRREVERSIBLE,
+                credential_risk=CredentialRisk.SECRET_TRANSMISSION if (envelope and envelope.credential_access) else CredentialRisk.NONE,
+                destructive_risk=DestructiveRisk.HIGH if "block" in choice else DestructiveRisk.NONE,
+                needs_human_approval=needs_ha,
+                confidence=conf,
+                distributions=dist,
+                provider_latency_ms=latency_ms,
+                raw_response=resp_data,
+            )
+
         distributions_raw = resp_data.get("distributions", {})
 
         dist = FullProbabilityDistribution(
@@ -143,9 +221,10 @@ class DrexProvider(BaseDecisionProvider):
         payload = self._build_request_payload(envelope)
         start_t = time.perf_counter()
 
+        endpoint = self.api_url if "/v1/" in self.api_url else f"{self.api_url}/v1/evaluate"
         with httpx.Client(timeout=self.timeout_seconds) as client:
             resp = client.post(
-                f"{self.api_url}/v1/evaluate",
+                endpoint,
                 json=payload,
                 headers=self._headers(),
             )
@@ -162,15 +241,16 @@ class DrexProvider(BaseDecisionProvider):
                 or "unknown"
             )
 
-            return self._parse_response(data, resolved_model, latency_ms)
+            return self._parse_response(data, resolved_model, latency_ms, envelope=envelope)
 
     async def evaluate_async(self, envelope: ActionEnvelope) -> DrexEvaluationResult:
         payload = self._build_request_payload(envelope)
         start_t = time.perf_counter()
 
+        endpoint = self.api_url if "/v1/" in self.api_url else f"{self.api_url}/v1/evaluate"
         async with httpx.AsyncClient(timeout=self.timeout_seconds) as client:
             resp = await client.post(
-                f"{self.api_url}/v1/evaluate",
+                endpoint,
                 json=payload,
                 headers=self._headers(),
             )
@@ -186,4 +266,4 @@ class DrexProvider(BaseDecisionProvider):
                 or "unknown"
             )
 
-            return self._parse_response(data, resolved_model, latency_ms)
+            return self._parse_response(data, resolved_model, latency_ms, envelope=envelope)

@@ -1,6 +1,7 @@
 """Path validation and canonical confinement engine.
 
 Prevents path traversal, symlink escape, and unauthorized root access.
+Handles URL-encoded components, Unicode normalization, and relative jumps.
 """
 
 from __future__ import annotations
@@ -8,6 +9,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import List, Optional, Tuple
+import unicodedata
+from urllib.parse import unquote
 
 
 class PathValidator:
@@ -23,12 +26,23 @@ class PathValidator:
             for b in (blocked_paths or [])
         ]
 
-    def canonicalize(self, target_path: str, base_dir: Optional[str] = None) -> str:
-        """Resolve symlinks, handle relative paths, and canonicalize path."""
-        target = str(target_path).strip()
-        # Check for null byte injection
+    def normalize_input(self, path_str: str) -> str:
+        """Normalize URL encodings, Unicode variations, and check null bytes."""
+        target = str(path_str).strip()
         if "\0" in target:
             raise ValueError("Null byte detected in path")
+
+        # Unquote URL-encoded path components (e.g. %2e%2e%2f -> ../)
+        if "%" in target:
+            target = unquote(unquote(target))
+
+        # Unicode normalization
+        target = unicodedata.normalize("NFKC", target)
+        return target
+
+    def canonicalize(self, target_path: str, base_dir: Optional[str] = None) -> str:
+        """Resolve symlinks, handle relative paths, and canonicalize path."""
+        target = self.normalize_input(target_path)
 
         if base_dir:
             base_real = os.path.realpath(os.path.abspath(os.path.expanduser(base_dir)))
@@ -87,3 +101,20 @@ class PathValidator:
                 return False, canonical, f"Path '{canonical}' escapes allowed root(s): {roots}"
 
         return True, canonical, None
+
+    def validate_rename(
+        self,
+        src_path: str,
+        dest_path: str,
+        base_dir: Optional[str] = None,
+    ) -> Tuple[bool, str, Optional[str]]:
+        """Validate both source and destination of a rename operation."""
+        is_safe_src, can_src, reason_src = self.validate_path(src_path, base_dir=base_dir)
+        if not is_safe_src:
+            return False, can_src, f"Source path invalid: {reason_src}"
+
+        is_safe_dest, can_dest, reason_dest = self.validate_path(dest_path, base_dir=base_dir)
+        if not is_safe_dest:
+            return False, can_dest, f"Destination path invalid: {reason_dest}"
+
+        return True, can_dest, None

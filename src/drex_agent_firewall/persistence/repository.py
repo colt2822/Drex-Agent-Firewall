@@ -156,6 +156,16 @@ class ActionRepository:
             rows = cursor.fetchall()
             return [self._row_to_dict(cursor, r) for r in rows]
 
+    def get_actions_for_session(self, session_id: str) -> List[Dict[str, Any]]:
+        with self._lock:
+            cursor = self.conn.cursor()
+            cursor.execute(
+                "SELECT * FROM audit_actions WHERE session_id = ? ORDER BY timestamp ASC",
+                (session_id,),
+            )
+            rows = cursor.fetchall()
+            return [self._row_to_dict(cursor, r) for r in rows]
+
     def list_actions(
         self,
         limit: int = 50,
