@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Drex Agent Firewall</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <header class="app-header">
+      <div class="header-brand">
+        <span class="brand-shield">🛡️</span>
+        <div class="brand-titles">
+          <h1 class="brand-name">Drex Agent Firewall</h1>
+          <span class="brand-sub">Policy & Decision Firewall for Autonomous AI Agents</span>
+        </div>
+      </div>
+      <div class="header-status">
+        <div class="status-badge" id="provider-badge">
+          <span class="status-dot"></span>
+          <span id="provider-name">REPLAY MODE</span>
+        </div>
+        <div class="model-badge" id="model-badge">drex-latest</div>
+      </div>
+    </header>
+
+    <!-- Navigation Tabs -->
+    <nav class="nav-tabs">
+      <button class="nav-tab active" data-tab="overview">Overview</button>
+      <button class="nav-tab" data-tab="live-decisions">Live Decisions</button>
+      <button class="nav-tab" data-tab="trace-viewer">Trace Visualizer</button>
+      <button class="nav-tab" data-tab="agent-demo">Agent Demo</button>
+      <button class="nav-tab" data-tab="policy-sim">Policy Simulator</button>
+      <button class="nav-tab" data-tab="provider-health">Provider Health</button>
+    </nav>
+
+    <!-- Content Sections -->
+    <main class="app-main">
+      <!-- Section 1: Overview -->
+      <section id="tab-overview" class="tab-content active">
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <span class="metric-label">Evaluated Actions</span>
+            <span class="metric-value" id="stat-total">0</span>
+          </div>
+          <div class="metric-card metric-allow">
+            <span class="metric-label">Allowed</span>
+            <span class="metric-value" id="stat-allowed">0</span>
+          </div>
+          <div class="metric-card metric-constrain">
+            <span class="metric-label">Constrained</span>
+            <span class="metric-value" id="stat-constrained">0</span>
+          </div>
+          <div class="metric-card metric-escalate">
+            <span class="metric-label">Escalated</span>
+            <span class="metric-value" id="stat-escalated">0</span>
+          </div>
+          <div class="metric-card metric-block">
+            <span class="metric-label">Blocked</span>
+            <span class="metric-value" id="stat-blocked">0</span>
+          </div>
+          <div class="metric-card">
+            <span class="metric-label">Mean Latency</span>
+            <span class="metric-value" id="stat-latency">0.0ms</span>
+          </div>
+        </div>
+
+        <div class="card panel mt-4">
+          <h2 class="panel-title">System Architecture</h2>
+          <div class="architecture-diagram">
+            <div class="arch-box">Autonomous Agent</div>
+            <div class="arch-arrow">↓ proposed action</div>
+            <div class="arch-box arch-highlight">Action Envelope Normalizer</div>
+            <div class="arch-arrow">↓ sanitized context</div>
+            <div class="arch-box arch-highlight">Drex Decision Engine (Distributions)</div>
+            <div class="arch-arrow">↓ typed probabilities</div>
+            <div class="arch-box arch-highlight">Deterministic Policy & Invariants</div>
+            <div class="arch-arrow">↓ ALLOW / CONSTRAIN / ESCALATE / BLOCK</div>
+            <div class="arch-box">Enforcement Adapters (Shell, FS, Git, HTTP, MCP)</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 2: Live Decisions -->
+      <section id="tab-live-decisions" class="tab-content">
+        <div class="card panel">
+          <div class="panel-header">
+            <h2 class="panel-title">Evaluated Actions Audit Log</h2>
+            <button class="btn btn-secondary" id="btn-refresh-actions">Refresh</button>
+          </div>
+          <div class="table-container">
+            <table class="data-table" id="table-decisions">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Tool</th>
+                  <th>Operation</th>
+                  <th>Target</th>
+                  <th>Risk</th>
+                  <th>Decision</th>
+                  <th>Confidence</th>
+                  <th>Type</th>
+                  <th>Inspect</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-decisions">
+                <tr><td colspan="9" class="text-center text-muted">No actions evaluated yet. Run the demo or trigger a tool call.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 3: Trace Visualizer -->
+      <section id="tab-trace-viewer" class="tab-content">
+        <div class="card panel">
+          <div class="panel-header">
+            <h2 class="panel-title">Decision Trace Visualizer</h2>
+            <div class="input-group">
+              <input type="text" id="input-trace-id" class="input-text" placeholder="Enter Action ID or Trace ID">
+              <button class="btn btn-primary" id="btn-load-trace">Inspect Pipeline</button>
+            </div>
+          </div>
+          <div class="trace-pipeline" id="trace-pipeline-view">
+            <div class="pipeline-placeholder">Select an action from the Live Decisions tab or enter a Trace ID to view the full pipeline.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 4: Agent Killer Demo -->
+      <section id="tab-agent-demo" class="tab-content">
+        <div class="card panel">
+          <div class="panel-header">
+            <div>
+              <h2 class="panel-title">End-to-End Autonomous Agent Killer Demo</h2>
+              <p class="panel-subtitle">Sequential execution of 8 autonomous agent actions passing through the firewall.</p>
+            </div>
+            <button class="btn btn-primary" id="btn-run-demo">Execute Full Demo</button>
+          </div>
+          <div class="demo-progress-container" id="demo-results-container">
+            <p class="text-muted">Click "Execute Full Demo" to evaluate the 8 actions sequentially.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 5: Policy Simulator -->
+      <section id="tab-policy-sim" class="tab-content">
+        <div class="card panel">
+          <h2 class="panel-title">Policy & Confidence Simulator</h2>
+          <p class="panel-subtitle">Simulate how adjusting confidence thresholds affects action decisions in real-time.</p>
+          <div class="sim-grid">
+            <div class="sim-controls">
+              <div class="control-group">
+                <label>READ Confidence Threshold: <span id="val-sim-read">0.70</span></label>
+                <input type="range" min="0.50" max="0.99" step="0.01" value="0.70" id="slider-sim-read" class="slider">
+              </div>
+              <div class="control-group">
+                <label>WRITE Confidence Threshold: <span id="val-sim-write">0.90</span></label>
+                <input type="range" min="0.50" max="0.99" step="0.01" value="0.90" id="slider-sim-write" class="slider">
+              </div>
+              <div class="control-group">
+                <label>DELETE Confidence Threshold: <span id="val-sim-delete">0.98</span></label>
+                <input type="range" min="0.50" max="0.99" step="0.01" value="0.98" id="slider-sim-delete" class="slider">
+              </div>
+              <div class="control-group">
+                <label>Test Tool & Command</label>
+                <select id="sim-test-tool" class="input-select">
+                  <option value="shell">Shell: cat README.md</option>
+                  <option value="fs_write">Filesystem Write: src/app.py</option>
+                  <option value="fs_delete">Filesystem Delete: old_db.sqlite</option>
+                  <option value="shell_danger">Shell: rm -rf /</option>
+                  <option value="git_force">Git: git push --force</option>
+                </select>
+              </div>
+              <button class="btn btn-primary mt-2" id="btn-run-sim">Simulate Decision</button>
+            </div>
+            <div class="sim-output" id="sim-output-box">
+              <div class="placeholder-text">Adjust sliders and click "Simulate Decision" to preview policy interpretation.</div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Section 6: Provider Health -->
+      <section id="tab-provider-health" class="tab-content">
+        <div class="card panel">
+          <h2 class="panel-title">Provider & System Diagnostics</h2>
+          <div class="diag-grid mt-3">
+            <div class="diag-item">
+              <span class="diag-label">Active Provider</span>
+              <span class="diag-value" id="diag-provider">REPLAY</span>
+            </div>
+            <div class="diag-item">
+              <span class="diag-label">Requested Model</span>
+              <span class="diag-value" id="diag-req-model">drex-latest</span>
+            </div>
+            <div class="diag-item">
+              <span class="diag-label">Resolved Model</span>
+              <span class="diag-value" id="diag-res-model">replay-deterministic-v1</span>
+            </div>
+            <div class="diag-item">
+              <span class="diag-label">WAL Mode SQLite</span>
+              <span class="diag-value text-green">Active (PRAGMA journal_mode=WAL)</span>
+            </div>
+            <div class="diag-item">
+              <span class="diag-label">Prometheus Metrics</span>
+              <span class="diag-value"><a href="/metrics" target="_blank" class="link">/metrics</a></span>
+            </div>
+            <div class="diag-item">
+              <span class="diag-label">Health Endpoint</span>
+              <span class="diag-value"><a href="/healthz" target="_blank" class="link">/healthz</a></span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="app-footer">
+      <span>Drex Agent Firewall &bull; Open-Source Policy Layer for Autonomous AI Agents</span>
+      <span class="text-muted">Vendor-Neutral &bull; Fail-Closed &bull; Probability-Preserving</span>
+    </footer>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

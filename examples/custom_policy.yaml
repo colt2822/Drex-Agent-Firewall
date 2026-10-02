@@ -1,0 +1,57 @@
+# Custom Drex Agent Firewall Policy Specification
+provider:
+  type: replay
+  requested_model: drex-latest
+  timeout_seconds: 5.0
+
+policy:
+  default: escalate
+
+thresholds:
+  read: 0.70
+  write: 0.90
+  delete: 0.98
+  execute: 0.90
+  network: 0.85
+  auth: 0.95
+  external_publish: 0.97
+  money_movement: 0.99
+
+filesystem:
+  allowed_roots:
+    - /workspace
+    - .
+  blocked_paths:
+    - /etc/shadow
+    - /etc/sudoers
+    - /root
+    - ~/.ssh
+    - ~/.aws
+    - ~/.gnupg
+    - .git/config
+  max_files_changed: 25
+  max_bytes_written: 5242880
+
+shell:
+  max_runtime_seconds: 20.0
+  max_output_bytes: 524288
+  forbidden_patterns:
+    - "rm\\s+(-[rfRF]+\\s+)?/\\s*$"
+    - "rm\\s+-[rfRF]+\\s+/\\*"
+    - "mkfs"
+    - "dd\\s+if=.*of=/dev/"
+    - ":\\(\\)\\s*\\{\\s*:\\s*\\|\\s*:\\s*&\\s*\\}\\s*;\\s*:"
+    - "chmod\\s+-R\\s+777\\s+/"
+    - "curl\\s+.*\\|\\s*(sh|bash)"
+    - "wget\\s+.*\\|\\s*(sh|bash)"
+
+network:
+  allowed_domains:
+    - api.github.com
+    - pypi.org
+    - registry.npmjs.org
+  blocked_domains:
+    - 169.254.169.254
+    - metadata.google.internal
+    - localhost
+    - 127.0.0.1
