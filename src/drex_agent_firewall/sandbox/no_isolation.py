@@ -14,6 +14,7 @@ from drex_agent_firewall.sandbox.backend import (
     SandboxSpec,
     SandboxStatus,
 )
+from drex_agent_firewall.utils.process_io import bounded_communicate
 
 
 class NoIsolationBackend(IsolationBackend):
@@ -95,30 +96,30 @@ class NoIsolationBackend(IsolationBackend):
 
         start_t = time.perf_counter()
         try:
-            res = subprocess.run(
+            proc = subprocess.Popen(
                 command,
                 cwd=target_cwd,
-                input=input,
-                capture_output=True,
-                text=True,
                 env=exec_env,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            captured = bounded_communicate(
+                proc,
+                input=input,
                 timeout=exec_timeout,
+                max_output_bytes=spec.limits.max_output_bytes,
             )
             duration = time.perf_counter() - start_t
             return SandboxResult(
-                returncode=res.returncode,
-                stdout=res.stdout,
-                stderr=res.stderr,
+                returncode=124 if captured.timed_out else captured.returncode,
+                stdout=captured.stdout,
+                stderr=captured.stderr + (
+                    f"\nExecution timed out after {exec_timeout}s" if captured.timed_out else ""
+                ),
                 duration_seconds=round(duration, 3),
-            )
-        except subprocess.TimeoutExpired:
-            duration = time.perf_counter() - start_t
-            return SandboxResult(
-                returncode=124,
-                stdout="",
-                stderr=f"Execution timed out after {exec_timeout}s",
-                duration_seconds=round(duration, 3),
-                timed_out=True,
+                timed_out=captured.timed_out,
+                limit_exceeded=captured.limit_exceeded,
             )
         except Exception as e:
             duration = time.perf_counter() - start_t

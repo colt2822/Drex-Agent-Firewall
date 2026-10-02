@@ -16,6 +16,7 @@ from drex_agent_firewall.sandbox.backend import (
     SandboxSpec,
     SandboxStatus,
 )
+from drex_agent_firewall.utils.process_io import bounded_communicate
 
 logger = logging.getLogger(__name__)
 
@@ -149,29 +150,32 @@ class ContainerCLIBackend(IsolationBackend):
 
         start_t = time.perf_counter()
         try:
-            res = subprocess.run(
+            proc = subprocess.Popen(
                 exec_args,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            captured = bounded_communicate(
+                proc,
                 input=input,
-                capture_output=True,
-                text=True,
                 timeout=exec_timeout,
+                max_output_bytes=spec.limits.max_output_bytes,
             )
             duration = time.perf_counter() - start_t
             return SandboxResult(
-                returncode=res.returncode,
-                stdout=res.stdout,
-                stderr=res.stderr,
+                returncode=124 if captured.timed_out else captured.returncode,
+                stdout=captured.stdout,
+                stderr=captured.stderr + (
+                    f"\nExecution timed out after {exec_timeout}s" if captured.timed_out else ""
+                ),
                 duration_seconds=round(duration, 3),
+                timed_out=captured.timed_out,
+                limit_exceeded=captured.limit_exceeded,
             )
-        except subprocess.TimeoutExpired:
+        except Exception as exc:
             duration = time.perf_counter() - start_t
-            return SandboxResult(
-                returncode=124,
-                stdout="",
-                stderr=f"Execution timed out after {exec_timeout}s",
-                duration_seconds=round(duration, 3),
-                timed_out=True,
-            )
+            return SandboxResult(returncode=-1, stderr=f"Sandbox execution failed: {type(exc).__name__}", duration_seconds=round(duration, 3), error=type(exc).__name__)
 
     def stop(self, session_id: str) -> bool:
         if session_id not in self._sessions:

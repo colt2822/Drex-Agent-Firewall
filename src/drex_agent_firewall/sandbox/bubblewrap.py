@@ -22,6 +22,7 @@ from drex_agent_firewall.sandbox.backend import (
     SandboxSpec,
     SandboxStatus,
 )
+from drex_agent_firewall.utils.process_io import bounded_communicate
 
 logger = logging.getLogger(__name__)
 
@@ -516,48 +517,41 @@ class BubblewrapBackend(IsolationBackend):
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
                 env=clean_launcher_env,
             )
-            stdout_str, stderr_str = proc.communicate(input=input, timeout=exec_timeout)
+            captured = bounded_communicate(
+                proc,
+                input=input,
+                timeout=exec_timeout,
+                max_output_bytes=spec.limits.max_output_bytes,
+            )
             duration = time.perf_counter() - start_t
-            stdout_str = self._redact_runtime_auth(stdout_str, secret_values)
-            stderr_str = self._redact_runtime_auth(stderr_str, secret_values)
-            if len(stdout_str) > spec.limits.max_output_bytes:
-                stdout_str = stdout_str[:spec.limits.max_output_bytes] + "\n... [TRUNCATED]"
-            if len(stderr_str) > spec.limits.max_output_bytes:
-                stderr_str = stderr_str[:spec.limits.max_output_bytes] + "\n... [TRUNCATED]"
+            stdout_str = self._redact_runtime_auth(captured.stdout, secret_values)
+            stderr_str = self._redact_runtime_auth(captured.stderr, secret_values)
+            if captured.timed_out:
+                stderr_str += f"\n[DREX_SANDBOX_TIMEOUT]: Execution timed out after {exec_timeout}s"
+                return SandboxResult(
+                    returncode=124,
+                    stdout=stdout_str,
+                    stderr=stderr_str,
+                    duration_seconds=round(duration, 3),
+                    timed_out=True,
+                    limit_exceeded=captured.limit_exceeded,
+                )
             if broker.error and proc.returncode == 0:
                 return SandboxResult(
                     returncode=125,
                     stdout=stdout_str,
                     stderr="Controlled egress bridge failed; no host-network fallback was attempted.",
                     duration_seconds=round(duration, 3),
+                    limit_exceeded=captured.limit_exceeded,
                 )
             return SandboxResult(
-                returncode=proc.returncode,
+                returncode=captured.returncode,
                 stdout=stdout_str,
                 stderr=stderr_str,
                 duration_seconds=round(duration, 3),
-            )
-        except subprocess.TimeoutExpired:
-            if proc is not None:
-                proc.kill()
-                stdout_str, stderr_str = proc.communicate()
-                stdout_str = self._redact_runtime_auth(stdout_str, secret_values)
-                stderr_str = self._redact_runtime_auth(stderr_str, secret_values)
-                if len(stdout_str) > spec.limits.max_output_bytes:
-                    stdout_str = stdout_str[:spec.limits.max_output_bytes] + "\n... [TRUNCATED]"
-                if len(stderr_str) > spec.limits.max_output_bytes:
-                    stderr_str = stderr_str[:spec.limits.max_output_bytes] + "\n... [TRUNCATED]"
-            else:
-                stdout_str, stderr_str = "", ""
-            return SandboxResult(
-                returncode=124,
-                stdout=stdout_str,
-                stderr=stderr_str + f"\n[DREX_SANDBOX_TIMEOUT]: Execution timed out after {exec_timeout}s",
-                duration_seconds=round(time.perf_counter() - start_t, 3),
-                timed_out=True,
+                limit_exceeded=captured.limit_exceeded,
             )
         except Exception as exc:
             # Keep auth data and host paths out of the returned failure message.
@@ -656,40 +650,31 @@ class BubblewrapBackend(IsolationBackend):
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
                 env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
             )
             session_data["pids"].add(proc.pid)
 
-            try:
-                stdout_str, stderr_str = proc.communicate(input=input, timeout=exec_timeout)
-                duration = time.perf_counter() - start_t
-                timed_out = False
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                stdout_str, stderr_str = proc.communicate()
-                duration = time.perf_counter() - start_t
-                timed_out = True
+            captured = bounded_communicate(
+                proc,
+                input=input,
+                timeout=exec_timeout,
+                max_output_bytes=max_bytes,
+            )
+            duration = time.perf_counter() - start_t
+            stdout_str = captured.stdout
+            stderr_str = captured.stderr
+            if captured.timed_out:
                 stderr_str += f"\n[DREX_SANDBOX_TIMEOUT]: Execution timed out after {exec_timeout}s"
 
             session_data["pids"].discard(proc.pid)
 
-            # Check output limits
-            limit_exceeded = False
-            if len(stdout_str) > max_bytes:
-                stdout_str = stdout_str[:max_bytes] + f"\n... [TRUNCATED at {max_bytes} bytes]"
-                limit_exceeded = True
-            if len(stderr_str) > max_bytes:
-                stderr_str = stderr_str[:max_bytes] + f"\n... [TRUNCATED at {max_bytes} bytes]"
-                limit_exceeded = True
-
             return SandboxResult(
-                returncode=proc.returncode if not timed_out else 124,
+                returncode=captured.returncode if not captured.timed_out else 124,
                 stdout=stdout_str,
                 stderr=stderr_str,
                 duration_seconds=round(duration, 3),
-                timed_out=timed_out,
-                limit_exceeded=limit_exceeded,
+                timed_out=captured.timed_out,
+                limit_exceeded=captured.limit_exceeded,
             )
 
         except Exception as e:

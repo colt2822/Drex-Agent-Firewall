@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from drex_agent_firewall.adapters.base import BaseAdapter
 from drex_agent_firewall.constraints.enforcer import ConstraintEnforcer, ConstraintViolation
 from drex_agent_firewall.schemas.decision import FirewallDecision
+from drex_agent_firewall.utils.process_io import bounded_communicate
 
 
 class ShellExecutionResult:
@@ -143,43 +144,16 @@ class ShellAdapter(BaseAdapter):
                 env=exec_env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True,
+                stdin=subprocess.PIPE,
             )
 
-            try:
-                stdout, stderr = proc.communicate(timeout=runtime_timeout)
-                duration = time.perf_counter() - start_t
-                exit_code = proc.returncode
-
-                # Enforce bounded memory retention
-                if len(stdout) > max_bytes:
-                    stdout = stdout[:max_bytes] + "\n... [STDOUT TRUNCATED BY FIREWALL CONSTRAINT]"
-                if len(stderr) > max_bytes:
-                    stderr = stderr[:max_bytes] + "\n... [STDERR TRUNCATED BY FIREWALL CONSTRAINT]"
-
-                result = ShellExecutionResult(
-                    command=command,
-                    stdout=stdout,
-                    stderr=stderr,
-                    exit_code=exit_code,
-                    duration_seconds=duration,
-                    allowed=True,
-                    firewall_decision=decision,
-                )
-
-                self.record_execution_result(
-                    action_id=envelope.action_id,
-                    tool="shell",
-                    executed=True,
-                    result={"exit_code": exit_code, "duration_seconds": duration},
-                    error_class=None if exit_code == 0 else f"EXIT_{exit_code}",
-                )
-                return result
-
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.communicate()
-                duration = time.perf_counter() - start_t
+            captured = bounded_communicate(
+                proc,
+                timeout=runtime_timeout,
+                max_output_bytes=max_bytes,
+            )
+            duration = time.perf_counter() - start_t
+            if captured.timed_out:
                 self.record_execution_result(
                     action_id=envelope.action_id,
                     tool="shell",
@@ -188,14 +162,33 @@ class ShellAdapter(BaseAdapter):
                 )
                 return ShellExecutionResult(
                     command=command,
-                    stdout="",
-                    stderr=f"Execution exceeded timeout limit of {runtime_timeout}s",
+                    stdout=captured.stdout,
+                    stderr=captured.stderr + f"\nExecution exceeded timeout limit of {runtime_timeout}s",
                     exit_code=-9,
                     duration_seconds=duration,
                     allowed=True,
                     firewall_decision=decision,
                     error=f"Process killed after {runtime_timeout}s timeout constraint",
                 )
+
+            result = ShellExecutionResult(
+                command=command,
+                stdout=captured.stdout,
+                stderr=captured.stderr,
+                exit_code=captured.returncode,
+                duration_seconds=duration,
+                allowed=True,
+                firewall_decision=decision,
+            )
+
+            self.record_execution_result(
+                action_id=envelope.action_id,
+                tool="shell",
+                executed=True,
+                result={"exit_code": captured.returncode, "duration_seconds": duration},
+                error_class=None if captured.returncode == 0 else f"EXIT_{captured.returncode}",
+            )
+            return result
 
         except Exception as e:
             duration = time.perf_counter() - start_t

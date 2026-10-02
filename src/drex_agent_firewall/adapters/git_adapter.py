@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 from drex_agent_firewall.adapters.base import BaseAdapter
 from drex_agent_firewall.constraints.enforcer import ConstraintEnforcer, ConstraintViolation
 from drex_agent_firewall.schemas.decision import FirewallDecision
+from drex_agent_firewall.utils.process_io import bounded_communicate
 
 
 class GitResult:
@@ -149,27 +150,37 @@ class GitAdapter(BaseAdapter):
         # Run git command
         try:
             cmd = ["git"] + git_cmd_args
-            proc = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
                 cwd=working_dir,
-                capture_output=True,
-                text=True,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            captured = bounded_communicate(
+                proc,
                 timeout=decision.constraints.max_runtime_seconds or 30.0,
+                max_output_bytes=decision.constraints.max_output_bytes or (1024 * 1024),
             )
             res = GitResult(
                 operation=operation,
                 allowed=True,
                 firewall_decision=decision,
-                stdout=proc.stdout,
-                stderr=proc.stderr,
-                exit_code=proc.returncode,
+                stdout=captured.stdout,
+                stderr=captured.stderr,
+                exit_code=124 if captured.timed_out else captured.returncode,
+                error="Git command timed out" if captured.timed_out else None,
             )
             self.record_execution_result(
                 action_id=envelope.action_id,
                 tool="git",
                 executed=True,
                 result=res.to_dict(),
-                error_class=None if proc.returncode == 0 else f"EXIT_{proc.returncode}",
+                error_class=(
+                    "TIMEOUT_EXPIRED"
+                    if captured.timed_out
+                    else None if captured.returncode == 0 else f"EXIT_{captured.returncode}"
+                ),
             )
             return res
         except Exception as e:
