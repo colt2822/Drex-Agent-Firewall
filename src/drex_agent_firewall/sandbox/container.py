@@ -74,7 +74,10 @@ class ContainerCLIBackend(IsolationBackend):
             "--security-opt", "no-new-privileges",
         ]
 
-        if spec.network_mode in ("none", "firewall-only"):
+        # The OCI default is a bridged network with general egress. Every mode
+        # except the explicit host opt-out must start network-isolated because
+        # fine-grained allowlisted egress is not implemented by this backend.
+        if spec.network_mode != "host":
             run_args.extend(["--network", "none"])
 
         # Mount workspace
