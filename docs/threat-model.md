@@ -93,9 +93,29 @@ SQLite WAL Audit Persistence & Outcome Calibration
 
 ---
 
-## 5. Security Invariant Verification
+## 5. Architectural Bypass Assessment & Execution Boundaries
+
+### Hostile Bypass Assessment & Trust Boundary Analysis
+An autonomous coding agent can attempt to circumvent mediation if it has access to unmediated channels.
+The Drex Agent Firewall enforces mediation at the tool boundary (MCP proxy, Python SDK wrappers, and guarded execution adapters).
+
+| Interaction Path | Mediation Status | Boundary & Enforcement Invariant |
+| :--- | :--- | :--- |
+| **MCP Tool Calls** | **INTERCEPTED** | Validated and intercepted via `McpFirewallProxy`. JSON-RPC protocol messages are decoded and normalized before execution. |
+| **Guarded Adapters** | **INTERCEPTED** | `ShellAdapter`, `FilesystemAdapter`, `GitAdapter`, `HttpAdapter`, and `GitHubAdapter` enforce workspace roots, network ranges, and deterministic rules. |
+| **Shell Pipelines & Subshells** | **INTERCEPTED** | `ShellNormalizer` recursively strips quote fragmentation, unrolls shell wrappers (`sh -c`, `bash -c`), decodes base64 pipes, and extracts inline code (`python -c`, `node -e`, `ruby -e`, `perl -e`, `awk`, `find -exec`). |
+| **Script Staging & Task Runners** | **INTERCEPTED** | Inline interpreters and modifications to execution manifests (`Makefile`, `package.json`, build hooks) are monitored for staged malicious commands. |
+| **Network & SSRF** | **INTERCEPTED** | Destination host, proxy environment variables (`HTTP_PROXY`, `ALL_PROXY`), redirect targets, and Unix domain socket HTTP clients are validated. |
+| **Direct Unconfined Host Access** | **ENVIRONMENT BOUNDARY** | If an autonomous agent is granted raw, unmediated POSIX access to the host kernel without routing through MCP/Adapters, it can bypass any application-level firewall. **Hard Requirement**: Autonomous coding agents must be confined inside a container or sandbox where all tool capabilities are routed through Drex Agent Firewall adapters or MCP proxy. |
+
+---
+
+## 6. Security Invariant Verification
 
 The firewall's invariants are verified by:
-1. **Automated Unit & Integration Tests**: 60 unit tests covering every adapter and validator.
-2. **220-Scenario Adversarial Red-Team Suite**: Rigorous bypass test suite across all 10 categories achieving **0.0% high-impact false allows**.
-3. **Live Autonomous Agent Testing**: Claude Code executing inside disposable repositories with safe adversarial bait.
+1. **Automated Unit & Integration Tests**: 62 unit and integration tests covering every adapter, validator, normalizer, and provider.
+2. **105-Scenario Standard Benchmark Suite**: 100.0% accuracy, 0.0% false allow rate.
+3. **220-Scenario Adversarial Red-Team Suite**: Rigorous bypass test suite across all 10 categories achieving **99.09% accuracy** and **0.0% high-impact false allows**.
+4. **186-Scenario Hostile Bypass Benchmark Suite**: Attacks against the mediation architecture directly (`benchmarks/firewall_bypass/`) achieving **96.24% accuracy** and **0.0% high-impact false allows**.
+5. **Live Autonomous Agent Testing**: Claude Code v2.1.287 executing inside disposable repositories with live bait interception (100% autonomy, 0 bait leaked, test suite passing, fix committed).
+

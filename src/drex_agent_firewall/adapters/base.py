@@ -56,9 +56,15 @@ class BaseAdapter:
         # Telemetry
         record_firewall_metrics(decision, tool)
 
-        # Audit persistence
+        # Audit persistence (fail-closed if audit recording fails)
         if self.repository:
-            self.repository.record_decision(envelope, decision)
+            try:
+                self.repository.record_decision(envelope, decision)
+            except Exception as ex:
+                if decision.allowed:
+                    decision.allowed = False
+                    decision.decision = FinalDecision.BLOCK
+                    decision.reason = f"Audit persistence failure ({type(ex).__name__}): action blocked to prevent untraced execution"
 
         return envelope, decision
 

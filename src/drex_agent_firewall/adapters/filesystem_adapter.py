@@ -84,6 +84,9 @@ class FilesystemAdapter(BaseAdapter):
     def rename_file(self, src_path: str, dest_path: str, cwd: Optional[str] = None) -> FilesystemResult:
         return self._guarded_fs_op("rename", src_path, dest_path=dest_path, cwd=cwd)
 
+    def list_dir(self, path: str, cwd: Optional[str] = None) -> FilesystemResult:
+        return self._guarded_fs_op("list_dir", path, cwd=cwd)
+
     def _guarded_fs_op(
         self,
         operation: str,
@@ -178,6 +181,14 @@ class FilesystemAdapter(BaseAdapter):
             elif operation == "rename":
                 if canonical_dest:
                     os.rename(canonical_path, canonical_dest)
+            elif operation in {"list_dir", "list_directory"}:
+                if os.path.exists(canonical_path) and os.path.isdir(canonical_path):
+                    entries = sorted(os.listdir(canonical_path))
+                    out_content = "\n".join(entries)
+                elif os.path.isfile(canonical_path):
+                    out_content = os.path.basename(canonical_path)
+                else:
+                    out_content = ""
 
             new_hash = _compute_sha256(canonical_path)
             new_size = os.path.getsize(canonical_path) if os.path.isfile(canonical_path) else None

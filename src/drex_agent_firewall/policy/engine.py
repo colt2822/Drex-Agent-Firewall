@@ -228,7 +228,7 @@ class DeterministicPolicyEngine:
 
         # 7. GitHub External Publishing (issues, PRs, comments)
         if drex_eval.action_class == ActionClass.EXTERNAL_PUBLISH or envelope.tool.lower() == "github":
-            if envelope.operation.lower() in {"read_issue", "read_pr", "list_issues", "list_prs"}:
+            if envelope.read_only or envelope.operation.lower() in {"read_issue", "read_pr", "list_issues", "list_prs", "get_file", "search"}:
                 constraints.read_only = True
                 return (FinalDecision.ALLOW, "Read-only GitHub inspection allowed", constraints)
             # Mutations escalate or allow with constraints

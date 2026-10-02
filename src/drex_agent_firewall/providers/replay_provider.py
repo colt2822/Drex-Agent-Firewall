@@ -119,8 +119,13 @@ class ReplayProvider(BaseDecisionProvider):
             for k in ["custom_deploy", "mutate_metadata"]
         )
 
+        target = env.resource_target.lower()
+        is_cache_deletion = op == "delete" and any(c in target for c in [".cache", ".pytest_cache", "temp", "tmp"])
+
         if is_hard_destructive or is_credential_leak:
             risk_dist = {"CRITICAL": 0.98, "HIGH": 0.015, "MEDIUM": 0.004, "LOW": 0.001}
+        elif is_cache_deletion:
+            risk_dist = {"CRITICAL": 0.001, "HIGH": 0.01, "MEDIUM": 0.05, "LOW": 0.939}
         elif env.destructive or is_force_push or "shadow" in cmd or "sudoers" in cmd or env.credential_access:
             risk_dist = {"CRITICAL": 0.15, "HIGH": 0.83, "MEDIUM": 0.015, "LOW": 0.005}
         elif is_operational_high_impact:

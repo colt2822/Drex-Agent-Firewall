@@ -205,17 +205,17 @@ class ContextNormalizer:
             if any(k in op_check for k in ["pull_request", "create_pr", "merge", "issue", "comment", "publish"]):
                 external_write = True
                 external_effect = True
-            elif any(k in op_check for k in ["read", "list", "get", "status", "view", "fetch", "search", "check", "diff", "test", "lint", "calc", "math"]):
+            elif any(k in op_check for k in ["read", "list", "get", "status", "view", "fetch", "search", "check", "diff", "test", "lint", "calc", "math", "format_code"]):
                 read_only = True
             elif any(k in op_check for k in ["delete", "remove", "unlink"]):
                 destructive = True
                 filesystem_write = True
-            elif any(k in op_check for k in ["write", "modify", "create", "edit", "update", "format"]):
+            elif any(k in op_check for k in ["write", "modify", "create", "edit", "update", "format_file"]):
                 filesystem_write = True
 
             # Inspect embedded MCP arguments for files, commands, and network URLs
             path_arg = arguments.get("path") or arguments.get("file_path") or arguments.get("uri")
-            if path_arg:
+            if path_arg and not str(path_arg).startswith("http"):
                 clean_p = str(path_arg)
                 if clean_p.startswith("file://"):
                     clean_p = clean_p[7:]
@@ -237,7 +237,7 @@ class ContextNormalizer:
                         reversible = False
                         break
 
-            url_arg = arguments.get("url")
+            url_arg = arguments.get("url") or (arguments.get("uri") if str(arguments.get("uri", "")).startswith("http") else None)
             if url_arg:
                 network_access = True
                 resource_type = "url"

@@ -11,7 +11,7 @@ import base64
 import binascii
 import re
 from typing import Any, Dict, List, Optional, Set, Union
-from urllib.parse import unquote
+from urllib.parse import unquote, unquote_plus
 
 
 # Regex patterns matching secret types
@@ -21,17 +21,17 @@ SECRET_PATTERNS = [
     # AWS Secret Key
     re.compile(r"(?i)(?:aws_secret_access_key|aws_secret_key)\s*[:=]\s*['\"]?([A-Za-z0-9/+=]{40})['\"]?"),
     # GitHub Tokens (ghp, gho, ghu, ghs, ghr, github_pat)
-    re.compile(r"\b(gh[pousr]_[A-Za-z0-9_]{36,255})\b"),
+    re.compile(r"\b(gh[pousr]_[A-Za-z0-9_]{6,255})\b"),
     re.compile(r"\b(github_pat_[A-Za-z0-9_]{82})\b"),
     # OpenAI & Generic sk- Keys (sk-..., sk-proj-..., sk-ant-...)
     re.compile(r"\b(sk-(?:proj-|ant-)?[a-zA-Z0-9_-]{8,120})\b"),
     # Drex API Keys (nace_sk_...)
-    re.compile(r"\b(nace_sk_[A-Za-z0-9_-]{43})\b"),
+    re.compile(r"\b(nace_sk_[A-Za-z0-9_-]{16,64})\b"),
     # Slack tokens
     re.compile(r"\b(xox[baprs]-[0-9a-zA-Z-]{10,72})\b"),
     # Private Keys (RSA, EC, OPENSSH, PGP)
     re.compile(r"-----BEGIN [A-Z0-9_-]+ PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9_-]+ PRIVATE KEY-----"),
-    re.compile(r"-----BEGIN PGP PRIVATE KEY BLOCK-----[\s\S]*?-----END PGP PRIVATE KEY BLOCK-----"),
+    re.compile(r"-----BEGIN[ +]PGP[ +]PRIVATE[ +]KEY[ +]BLOCK-----[\s\S]*?-----END[ +]PGP[ +]PRIVATE[ +]KEY[ +]BLOCK-----"),
     # Bearer Tokens in headers or strings
     re.compile(r"(?i)\bBearer\s+([a-zA-Z0-9\-._~+/]+=*)"),
     # Generic password and key assignments (quoted or unquoted in query string or form data)
@@ -53,8 +53,8 @@ SENSITIVE_FIELD_NAMES = {
     "drex_api_key",
 }
 
-# Regex to detect base64 candidates (length >= 16)
-B64_CANDIDATE_REGEX = re.compile(r"\b([A-Za-z0-9+/]{16,}={0,2})\b")
+# Regex to detect base64 candidates (length >= 16) with proper boundaries
+B64_CANDIDATE_REGEX = re.compile(r"(?<![A-Za-z0-9+/])([A-Za-z0-9+/]{16,}={0,2})(?![A-Za-z0-9+/=])")
 # Regex to detect hex candidates (length >= 32)
 HEX_CANDIDATE_REGEX = re.compile(r"\b([0-9a-fA-F]{32,})\b")
 
@@ -163,17 +163,21 @@ class SecretRedactor:
             if pattern.search(scan_text):
                 return True
 
-        if "PRIVATE KEY" in scan_text:
+        if "PRIVATE KEY" in scan_text or "PRIVATE KEY" in unquote_plus(scan_text):
             return True
 
         if re.search(r"https?://[^:\s@]+:[^@\s]+@", scan_text):
             return True
 
-        # 2. URL-decoded check
-        if "%" in scan_text:
-            unquoted = unquote(scan_text)
+        # 2. URL-decoded check (single and double unquote with + space handling)
+        if "%" in scan_text or "+" in scan_text:
+            unquoted = unquote_plus(scan_text)
             if unquoted != scan_text:
                 if any(sec in unquoted for sec in self._custom_secrets) or any(pat.search(unquoted) for pat in SECRET_PATTERNS):
+                    return True
+            double_unquoted = unquote_plus(unquoted)
+            if double_unquoted != unquoted:
+                if any(sec in double_unquoted for sec in self._custom_secrets) or any(pat.search(double_unquoted) for pat in SECRET_PATTERNS):
                     return True
 
         # 3. Base64 candidates check
@@ -197,5 +201,15 @@ class SecretRedactor:
                     return True
             except Exception:
                 pass
+
+        # 5. Split token concatenation across JSON / query parameters
+        collapsed_query = re.sub(r"[?&][a-zA-Z0-9_]+=", "", scan_text)
+        if any(pat.search(collapsed_query) for pat in SECRET_PATTERNS):
+            return True
+
+        collapsed_json = re.sub(r"['\",\s\[\]\{\}]+", "", scan_text)
+        for pattern in SECRET_PATTERNS:
+            if pattern.search(collapsed_json):
+                return True
 
         return False
