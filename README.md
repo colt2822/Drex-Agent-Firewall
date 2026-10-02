@@ -230,6 +230,11 @@ HOST ENVIRONMENT
 ### Limitations
 - Bubblewrap **shares the host Linux kernel**. It is not a microVM, hypervisor, or formal verification boundary.
 - **No cgroup-based resource limits** are enforced by Bubblewrap alone. Timeout enforcement and output truncation provide partial mitigation.
+- The MCP policy layer is not mandatory mediation. Agents with native shell or filesystem access can perform workspace actions without calling the MCP server; the outer sandbox limits some host access but does not make every effect policy checked.
+- The MCP audit SQLite file is currently created in the writable workspace. A sandboxed agent that can reach that file may modify or remove its records. Treat these records as diagnostic, not tamper-proof evidence.
+- Resource controls vary by backend. Bubblewrap does not enforce CPU, memory, or file-descriptor quotas; configured command timeouts, output limits, and namespace boundaries do not prevent every resource exhaustion attack.
+- Disk and file-descriptor quotas are not enforced consistently across backends, and command timeouts are not a whole-session wall-clock limit. Container backends apply their configured CPU, memory, and PID limits; those limits are not portable to every backend.
+- The runtime is defense-in-depth and is not a complete authoritative security boundary. Do not rely on it as the sole enforcement or audit control for high-impact actions.
 - The legacy `allowlisted` network mode remains fully isolated. Use `controlled-online` only for supported authenticated agent calls; Codex currently permits `api.openai.com`, `auth.openai.com`, and `chatgpt.com`, while Claude permits `api.anthropic.com`.
 - The broker accepts CONNECT requests only for exact configured hostname strings on TCP/443 and validates each resolved destination as globally routable. It does not inspect TLS SNI, HTTPS URL paths, or encrypted request contents.
 - Codex's inner workspace sandbox may be disabled for its CLI child when nested Bubblewrap cannot create a namespace. In that mode, the enclosing Drex Bubblewrap remains the filesystem, process, and network enforcement boundary.
@@ -360,7 +365,7 @@ Every decision is persisted to SQLite in **WAL mode** (`PRAGMA journal_mode=WAL`
 - Traces survive process restarts.
 - Secrets are scrubbed prior to persistence.
 
-The FastAPI service exposes Prometheus metrics and a web dashboard. Start it with `drex-firewall serve --port 8000`; review [SECURITY.md](SECURITY.md) before exposing the service beyond a trusted local environment.
+The FastAPI service exposes Prometheus metrics and a web dashboard. Its API has no built-in authentication, so `drex-firewall serve` binds to loopback by default. Cross-origin browser access is disabled by default; set `DREX_FIREWALL_CORS_ORIGINS` to a comma-separated list of exact HTTP(S) origins if needed. Wildcards are rejected. Review [SECURITY.md](SECURITY.md) and provide separate access controls before binding to a network interface.
 
 ---
 

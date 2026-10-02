@@ -35,7 +35,7 @@ HOST ENVIRONMENT
 
 ---
 
-## 2. Security Guarantees & Invariants
+## 2. Implemented Boundary Controls
 
 1. **Host `$HOME` Isolation**: The host user's home directory (`~`) is never mounted into the sandbox. The agent is provided an ephemeral tmpfs home directory at `/home/agent`.
 2. **Host Credential Cleansing**: Host environment variables are purged (`--clearenv`). Sensitive tokens (`GITHUB_TOKEN`, `AWS_*`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `SSH_AUTH_SOCK`) are strictly excluded.
@@ -46,7 +46,14 @@ HOST ENVIRONMENT
    - Host `/`, `/root`, `/home`, and docker sockets (`/var/run/docker.sock`) are inaccessible.
 4. **Dropped Kernel Capabilities**: All Linux capabilities are dropped (`CAP_DROP ALL`). The sandbox operates entirely unprivileged without setuid or root escalation avenues.
 5. **Controlled Network Boundary**: Network egress is denied by default (`--unshare-net` in `none` and `firewall-only` modes). The separate `controlled-online` mode also unshares networking and permits only exact provider CONNECT hostnames on TCP/443 through a loopback-only proxy and one mode-0600 per-session socket mounted at `/run/drex-egress.sock`. Host Docker, Podman, and SSH runtime sockets are not mounted. TLS SNI and encrypted URL paths are not inspected.
-6. **Complete Audit Trail**: Every sandbox session is tracked in SQLite with session duration, tool actions, and escape probe history.
+6. **Diagnostic Audit Records**: Sandbox sessions and mediated tool actions are recorded in SQLite. The current MCP database is stored in the writable workspace and can be modified or deleted by the agent; direct native actions may bypass MCP records. Do not treat this database as a complete or tamper-proof audit trail.
+
+## 2.1 Known Limitations
+
+- MCP is not mandatory mediation: native shell and filesystem actions may bypass its policy checks.
+- The MCP audit database is agent-writable in the current layout (FWA-U3).
+- Bubblewrap does not enforce cgroup CPU, memory, or file-descriptor quotas (FWA-U1). Resource exhaustion remains possible.
+- The runtime shares the host kernel and is defense-in-depth, not a complete authoritative security boundary.
 
 ---
 

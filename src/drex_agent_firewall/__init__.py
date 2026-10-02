@@ -24,7 +24,7 @@ from drex_agent_firewall.schemas.decision import (
 from drex_agent_firewall.schemas.outcome import ActionOutcome, OutcomeType
 from drex_agent_firewall.schemas.config import FirewallConfig
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "DrexFirewall",

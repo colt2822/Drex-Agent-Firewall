@@ -5,6 +5,14 @@ All notable changes to the Drex Agent Firewall project will be documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] - 2026-10-02
+
+### Security
+- Apply audited network isolation, DNS/proxy controls, bounded HTTP and subprocess output, credential environment filtering, and secure MCP configuration wiring.
+- Restrict cross-origin browser access to explicit exact origins and bind the unauthenticated HTTP API to loopback by default.
+- Document unresolved resource quota, mandatory mediation, and audit database isolation limitations.
+- Fix the `serve --policy` path to pass a configured firewall instance into the FastAPI app.
+
 ## [0.1.0] - 2026-10-02
 
 ### Added

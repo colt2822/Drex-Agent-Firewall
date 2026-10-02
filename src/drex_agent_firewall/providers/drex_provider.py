@@ -112,7 +112,7 @@ class DrexProvider(BaseDecisionProvider):
         headers = {
             "Content-Type": "application/json",
             "Accept": "application/json",
-            "User-Agent": "DrexAgentFirewall/0.1.0",
+            "User-Agent": "DrexAgentFirewall/0.1.1",
         }
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"

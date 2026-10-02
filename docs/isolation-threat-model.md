@@ -11,7 +11,7 @@ In application-level firewalls, requests routed through mediation layers (MCP, H
 3. The agent could access container management sockets (`/var/run/docker.sock`) to launch privileged host escapes.
 4. The agent could stage persistence hooks in system directories (`/etc/cron.d`, `~/.bashrc`).
 
-The isolated agent runtime establishes an **outer operating system confinement boundary** ensuring the agent cannot reach host resources even if it executes arbitrary native binary commands.
+The isolated agent runtime provides an **outer operating system confinement layer** that reduces access to host resources for processes launched inside it. It does not force every agent action through the MCP policy layer, and it is not a complete or authoritative security boundary.
 
 ---
 
@@ -26,7 +26,14 @@ The isolated agent runtime establishes an **outer operating system confinement b
 | **Container Daemon Escape** | `docker run -v /:/host ...` | Shell parser blocks `docker.sock` patterns | `/var/run/docker.sock` is not mounted into sandbox | **MUTUALLY REINFORCED** |
 | **Privilege Escalation** | `sudo su`, `pkexec`, `unshare` | Hard rules block `sudo` invocations | Unprivileged user namespace, setuid disabled, `CAP_DROP ALL` | **MUTUALLY REINFORCED** |
 | **Process Snooping** | `kill -9 <host_pid>`, inspecting `/proc` | Shell argument inspection | PID namespace isolated (`--unshare-pid`); host PIDs invisible | **MUTUALLY REINFORCED** |
-| **Resource Exhaustion** | Fork bombs, memory bombs | Max command runtime limits | Process tree killed on timeout; `--die-with-parent` enforced | **MUTUALLY REINFORCED** |
+| **Resource Exhaustion** | Fork bombs, memory bombs | Command timeout and bounded output | Bubblewrap has no cgroup CPU, memory, or file-descriptor quotas; process and wall-time limits vary by backend | **UNRESOLVED (FWA-U1)** |
+
+## 2.1 Known Limitations
+
+- Native agent shell and filesystem actions can bypass MCP policy evaluation. The outer sandbox constrains some host access but does not provide mandatory mediation (FWA-U2).
+- The MCP audit SQLite database currently resides in the agent-writable workspace. An agent may alter or remove these records; they are not tamper-proof (FWA-U3).
+- Bubblewrap shares the host kernel and does not enforce cgroup resource quotas. No sandbox backend is claimed to provide complete isolation.
+- Treat the inner firewall and its audit records as defense-in-depth. Use independent controls for authorization and durable audit evidence.
 
 ---
 
