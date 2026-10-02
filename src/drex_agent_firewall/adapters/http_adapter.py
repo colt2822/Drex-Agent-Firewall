@@ -6,6 +6,7 @@ from typing import Any, Dict, Optional
 import httpx
 
 from drex_agent_firewall.adapters.base import BaseAdapter
+from drex_agent_firewall.adapters.guarded_http_transport import GuardedHTTPTransport
 from drex_agent_firewall.constraints.enforcer import ConstraintEnforcer, ConstraintViolation
 from drex_agent_firewall.schemas.decision import FirewallDecision
 
@@ -109,30 +110,43 @@ class HttpAdapter(BaseAdapter):
 
         # 3. Guarded HTTP Request
         try:
-            with httpx.Client(timeout=timeout, follow_redirects=False) as client:
-                resp = client.request(
+            with httpx.Client(
+                timeout=timeout,
+                follow_redirects=False,
+                transport=GuardedHTTPTransport(),
+            ) as client:
+                with client.stream(
                     m,
                     url,
                     headers=headers,
                     params=params,
                     data=data,
                     json=json_data,
-                )
+                ) as resp:
+                    max_bytes = decision.constraints.max_output_bytes or (1024 * 1024)
+                    body = bytearray()
+                    truncated = False
+                    for chunk in resp.iter_bytes():
+                        remaining = max_bytes - len(body)
+                        if len(chunk) > remaining:
+                            body.extend(chunk[:remaining])
+                            truncated = True
+                            break
+                        body.extend(chunk)
 
-                max_bytes = decision.constraints.max_output_bytes or (1024 * 1024)
-                body_text = resp.text
-                if len(body_text) > max_bytes:
-                    body_text = body_text[:max_bytes] + "... [TRUNCATED_RESPONSE]"
+                    body_text = body.decode(resp.encoding or "utf-8", errors="replace")
+                    if truncated:
+                        body_text += "... [TRUNCATED_RESPONSE]"
 
-                result = HttpResult(
-                    method=m,
-                    url=url,
-                    allowed=True,
-                    firewall_decision=decision,
-                    status_code=resp.status_code,
-                    text=body_text,
-                    headers=dict(resp.headers),
-                )
+                    result = HttpResult(
+                        method=m,
+                        url=url,
+                        allowed=True,
+                        firewall_decision=decision,
+                        status_code=resp.status_code,
+                        text=body_text,
+                        headers=dict(resp.headers),
+                    )
 
                 self.record_execution_result(
                     action_id=envelope.action_id,
