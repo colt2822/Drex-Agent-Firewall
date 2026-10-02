@@ -12,6 +12,28 @@ def test_api_healthz():
     assert resp.json()["status"] == "healthy"
 
 
+def test_api_cors_requires_explicit_exact_origin(monkeypatch, tmp_path):
+    monkeypatch.setenv("DREX_FIREWALL_CORS_ORIGINS", "https://trusted.example")
+    fw = DrexFirewall(database_path=str(tmp_path / "cors.db"))
+    client = TestClient(create_app(firewall=fw))
+    attacker = client.get("/healthz", headers={"Origin": "https://attacker.example"})
+    trusted = client.get("/healthz", headers={"Origin": "https://trusted.example"})
+    assert "access-control-allow-origin" not in attacker.headers
+    assert trusted.headers.get("access-control-allow-origin") == "https://trusted.example"
+    assert "access-control-allow-credentials" not in trusted.headers
+
+
+def test_api_cors_rejects_wildcard_configuration(monkeypatch, tmp_path):
+    monkeypatch.setenv("DREX_FIREWALL_CORS_ORIGINS", "*")
+    fw = DrexFirewall(database_path=str(tmp_path / "cors-wildcard.db"))
+    try:
+        create_app(firewall=fw)
+    except ValueError as exc:
+        assert "exact HTTP(S) origins" in str(exc)
+    else:
+        raise AssertionError("wildcard CORS configuration must fail closed")
+
+
 def test_api_readyz():
     client = TestClient(create_app())
     resp = client.get("/readyz")

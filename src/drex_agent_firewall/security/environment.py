@@ -50,6 +50,7 @@ _SENSITIVE_MARKERS = (
     "PASSWORD",
     "PASSWD",
     "CREDENTIAL",
+    "COOKIE",
 )
 
 
@@ -59,7 +60,10 @@ def is_sensitive_environment_name(name: str) -> bool:
         normalized in _BLOCKED_EXACT
         or any(normalized.startswith(prefix) for prefix in _BLOCKED_PREFIXES)
         or any(marker in normalized for marker in _SENSITIVE_MARKERS)
+        or normalized == "KEY"
+        or normalized.endswith("_KEY")
         or normalized in {"AUTH", "AUTHORIZATION"}
+        or normalized.endswith("_AUTHORIZATION")
         or normalized.endswith("_AUTH")
         or "_AUTH_" in normalized
     )

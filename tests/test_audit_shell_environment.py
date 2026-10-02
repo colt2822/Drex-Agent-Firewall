@@ -10,6 +10,9 @@ def test_shell_adapter_does_not_inherit_secret_environment_variants(monkeypatch)
         "openai_api_key": "DREX_SYNTHETIC_OPENAI_CANARY",
         "aws_secret_access_key": "DREX_SYNTHETIC_AWS_CANARY",
         "custom_db_password": "DREX_SYNTHETIC_PASSWORD_CANARY",
+        "custom_service_key": "DREX_SYNTHETIC_CUSTOM_KEY_CANARY",
+        "session_cookie": "DREX_SYNTHETIC_COOKIE_CANARY",
+        "custom_authorization": "DREX_SYNTHETIC_AUTHORIZATION_CANARY",
         "http_proxy": "DREX_SYNTHETIC_PROXY_CANARY",
     }
     for name, value in values.items():

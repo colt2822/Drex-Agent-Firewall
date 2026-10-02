@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -24,7 +25,40 @@ def test_session_mcp_config_does_not_follow_workspace_symlink(tmp_path):
 
     assert outside.read_text(encoding="utf-8") == "unchanged host canary"
     assert config_path != str(link)
-    assert not (workspace / config_path).is_symlink()
+    assert not str(config_path).startswith(str(workspace) + "/")
+    assert (workspace / link.name).is_symlink()
+    assert os.stat(config_path).st_mode & 0o777 == 0o600
+    assert os.stat(os.path.dirname(config_path)).st_mode & 0o777 == 0o700
+
+
+def test_session_mounts_private_mcp_config_read_only(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    class _CaptureSessionBackend:
+        name = "bubblewrap"
+
+        def prepare(self, spec):
+            self.spec = spec
+
+        def launch(self, _spec):
+            return SimpleNamespace(status=SandboxStatus.RUNNING)
+
+    class _CaptureRepository:
+        def record_sandbox_session(self, **_kwargs):
+            pass
+
+    manager = SandboxManager.__new__(SandboxManager)
+    manager.backend = _CaptureSessionBackend()
+    manager.repository = _CaptureRepository()
+    manager.db_path = str(tmp_path / "audit.db")
+    manager._mcp_config_paths = {}
+    manager.create_session(str(workspace), session_id="mcp-mount-canary")
+
+    mount = next(m for m in manager.backend.spec.extra_mounts if m.container_path == "/tmp/.drex_mcp_config.json")
+    assert mount.mode == "ro"
+    assert not mount.host_path.startswith(str(workspace) + "/")
+    manager._remove_mcp_config("mcp-mount-canary")
 
 
 class _CaptureBackend:
@@ -61,7 +95,9 @@ def test_run_agent_loads_the_generated_firewall_mcp_server(tmp_path, agent_type)
     manager = SandboxManager.__new__(SandboxManager)
     manager.backend = _CaptureBackend()
     manager._mcp_config_paths = {}
-    config_path = workspace / "mcp.json"
+    private_dir = tmp_path / "private"
+    private_dir.mkdir(mode=0o700)
+    config_path = private_dir / "mcp.json"
     config_path.write_text(
         json.dumps({
             "mcpServers": {
@@ -76,12 +112,17 @@ def test_run_agent_loads_the_generated_firewall_mcp_server(tmp_path, agent_type)
     )
     manager.repository = _SessionRepository(agent_type, str(config_path))
 
+    # An untrusted workspace replacement does not alter the private host copy.
+    workspace_config = workspace / ".drex_mcp_config.json"
+    workspace_config.symlink_to(tmp_path / "attacker.json")
+    (tmp_path / "attacker.json").write_text("{}", encoding="utf-8")
+
     manager.run_agent("mcp-canary", "synthetic prompt")
 
     command = manager.backend.command
     if agent_type == "claude":
         assert "--mcp-config" in command
-        assert command[command.index("--mcp-config") + 1] == f"/workspace/{config_path.name}"
+        assert command[command.index("--mcp-config") + 1] == "/tmp/.drex_mcp_config.json"
         assert "--strict-mcp-config" in command
     else:
         serialized = " ".join(command)

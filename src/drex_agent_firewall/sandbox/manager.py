@@ -21,7 +21,7 @@ from drex_agent_firewall.sandbox.backend import (
     SandboxStatus,
 )
 from drex_agent_firewall.sandbox.factory import get_isolation_backend
-from drex_agent_firewall.schemas.config import FirewallConfig
+from drex_agent_firewall.schemas.config import FirewallConfig, SandboxMount
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ class SandboxManager:
                 "FAIL-CLOSED: controlled-online networking is implemented only by the Bubblewrap backend"
             )
 
-        # Generate Drex MCP configuration inside workspace if not present
+        # Keep the generated MCP configuration outside agent-writable paths.
         mcp_cfg_path = self._generate_mcp_config(abs_workspace, policy_pack, sid, agent_type)
         self._mcp_config_paths[sid] = mcp_cfg_path
 
@@ -95,6 +95,14 @@ class SandboxManager:
             mcp_config_path=mcp_cfg_path,
             drex_db_path=os.path.abspath(self.db_path),
             env_overrides=env_overrides or {},
+            extra_mounts=[
+                *cfg.sandbox.extra_mounts,
+                SandboxMount(
+                    host_path=mcp_cfg_path,
+                    container_path="/tmp/.drex_mcp_config.json",
+                    mode="ro",
+                ),
+            ],
         )
 
         try:
@@ -144,7 +152,7 @@ class SandboxManager:
         session_id: str,
         agent_type: str,
     ) -> str:
-        """Create an exclusive, private MCP config file inside the workspace."""
+        """Create a private MCP config outside the agent-writable workspace."""
         mcp_cfg = {
             "mcpServers": {
                 "drex_firewall": {
@@ -167,12 +175,15 @@ class SandboxManager:
                 }
             }
         }
+        private_dir = tempfile.mkdtemp(prefix="drex-mcp-config-")
+        os.chmod(private_dir, 0o700)
         fd, cfg_file = tempfile.mkstemp(
             prefix=".drex_mcp_config-",
             suffix=".json",
-            dir=workspace_path,
+            dir=private_dir,
         )
         try:
+            os.fchmod(fd, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(mcp_cfg, f, indent=2)
                 f.flush()
@@ -180,6 +191,10 @@ class SandboxManager:
         except Exception:
             try:
                 os.unlink(cfg_file)
+            except OSError:
+                pass
+            try:
+                os.rmdir(private_dir)
             except OSError:
                 pass
             raise
@@ -191,6 +206,10 @@ class SandboxManager:
             try:
                 os.unlink(path)
             except FileNotFoundError:
+                pass
+            try:
+                os.rmdir(os.path.dirname(path))
+            except OSError:
                 pass
 
     def run_agent(
@@ -216,7 +235,7 @@ class SandboxManager:
             )
             if not mcp_config_path or not os.path.isfile(mcp_config_path):
                 raise RuntimeError("Drex MCP configuration is missing; refusing to launch the agent without firewall tools")
-            guest_mcp_config_path = os.path.join("/workspace", os.path.basename(mcp_config_path))
+            guest_mcp_config_path = "/tmp/.drex_mcp_config.json"
             network_mode = sess_record.get("network_mode", "firewall-only") if sess_record else "firewall-only"
             if network_mode != "controlled-online":
                 raise RuntimeError(
