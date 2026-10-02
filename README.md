@@ -222,23 +222,29 @@ HOST ENVIRONMENT
 
 ### Security Properties
 - **Host `$HOME` Isolated**: The host home directory (`~`) is never mounted. The agent runs with an isolated ephemeral tmpfs at `/home/agent`.
-- **Ambient Environment Cleared**: Host environment is wiped (`--clearenv`). Ambient secrets (`GITHUB_TOKEN`, `AWS_*`, `OPENAI_API_KEY`, `SSH_AUTH_SOCK`) are not inherited. Narrow runtime credentials (e.g., Claude CLI token) are injected only when required for the specified agent type, are scoped to the sandbox session, and are destroyed on cleanup.
+- **Ambient Environment Cleared**: Host environment is wiped (`--clearenv`). Ambient secrets (`GITHUB_TOKEN`, `AWS_*`, `OPENAI_API_KEY`, `SSH_AUTH_SOCK`) are not inherited. The opt-in `controlled-online` path injects only the selected agent's existing auth file, read-only for that call, and removes its ephemeral copy when the call ends.
 - **Rootless & Unprivileged**: Runs via unprivileged user namespaces (`bwrap` bubblewrap), drops all 38 Linux capabilities (`CAP_DROP ALL`), and forbids setuid.
 - **Docker Socket Blocked**: Daemon sockets (`/var/run/docker.sock`) are inaccessible, neutralizing container-breakout vectors.
+- **No User-Local Directory Mount**: Host `~/.local`, `~/.codex`, and host `$HOME` are not mounted. Codex and Claude use system-installed executables from read-only `/usr`.
+- **Controlled Online Agent Calls**: This mode keeps Bubblewrap's network namespace unshared. A loopback-only in-sandbox CONNECT proxy uses one mode-0600 per-session socket mounted at `/run/drex-egress.sock`; the host broker permits exact provider hostnames on TCP/443 and rejects DNS results that are not globally routable. Host Docker, Podman, and SSH runtime sockets are not mounted.
 
 ### Limitations
 - Bubblewrap **shares the host Linux kernel**. It is not a microVM, hypervisor, or formal verification boundary.
 - **No cgroup-based resource limits** are enforced by Bubblewrap alone. Timeout enforcement and output truncation provide partial mitigation.
-- The `allowlisted` network mode does not yet implement fine-grained veth/iptables egress filtering; it currently falls back to full network isolation.
-- `~/.local` is mounted read-only as `/opt/agent_tools` and may expose cached application data beyond binaries.
+- The legacy `allowlisted` network mode remains fully isolated. Use `controlled-online` only for supported authenticated agent calls; Codex currently permits `api.openai.com`, `auth.openai.com`, and `chatgpt.com`, while Claude permits `api.anthropic.com`.
+- The broker accepts CONNECT requests only for exact configured hostname strings on TCP/443 and validates each resolved destination as globally routable. It does not inspect TLS SNI, HTTPS URL paths, or encrypted request contents.
+- Codex's inner workspace sandbox is disabled only for the CLI child because nested Bubblewrap fails in this host's outer user namespace (`No permissions to create new namespace`). The enclosing Drex Bubblewrap remains in force for filesystem, process, and network isolation.
 
 ### Commands
 ```bash
 # Run command inside sandbox
 drex-firewall sandbox run --workspace . -- ls -la /workspace
 
-# Run Claude Code inside isolated sandbox
-drex-firewall sandbox demo --agent claude
+# Run Claude Code with controlled provider egress
+drex-firewall sandbox demo --agent claude --network controlled-online
+
+# Run Codex with controlled OpenAI/ChatGPT egress
+drex-firewall sandbox demo --agent codex --network controlled-online
 
 # Run defensive escape audit session with Claude Code
 drex-firewall sandbox demo --escape-session --agent claude

@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import shutil
-import sys
 import time
 import uuid
 from typing import Any, Dict, List, Optional
@@ -73,6 +71,11 @@ class SandboxManager:
         cfg = config or get_policy_pack(policy_pack)
         net_mode = network_mode or cfg.sandbox.network_mode
         lims = limits or cfg.sandbox.limits
+
+        if net_mode == "controlled-online" and self.backend.name != "bubblewrap":
+            raise RuntimeError(
+                "FAIL-CLOSED: controlled-online networking is implemented only by the Bubblewrap backend"
+            )
 
         # Generate Drex MCP configuration inside workspace if not present
         mcp_cfg_path = self._generate_mcp_config(abs_workspace, policy_pack, sid, agent_type)
@@ -181,26 +184,39 @@ class SandboxManager:
         agent_type = sess_record.get("agent", "claude") if sess_record else "claude"
 
         # Determine agent command vector
-        if agent_type == "claude":
-            claude_bin = "claude"
-            cmd = [
-                claude_bin,
-                "--dangerously-skip-permissions",
-            ]
-            res = self.exec_command(session_id, cmd, timeout=timeout, input=prompt)
-            return res
-        elif agent_type == "codex":
-            codex_bin = shutil.which("codex") or "/opt/agent_tools/bin/codex"
-            cmd = [
-                codex_bin,
-                "exec",
-                prompt,
-                "--cd",
-                "/workspace",
-                "--dangerously-bypass-approvals-and-sandbox",
-            ]
-            res = self.exec_command(session_id, cmd, timeout=timeout)
-            return res
+        if agent_type in ("claude", "codex"):
+            network_mode = sess_record.get("network_mode", "firewall-only") if sess_record else "firewall-only"
+            if network_mode != "controlled-online":
+                raise RuntimeError(
+                    f"Authenticated {agent_type} task requires explicit network_mode='controlled-online'; "
+                    "network=none remains isolated and receives no runtime auth"
+                )
+            exec_agent = getattr(self.backend, "exec_agent", None)
+            if exec_agent is None:
+                raise RuntimeError("Controlled online agent execution is available only on the Bubblewrap backend")
+
+            if agent_type == "claude":
+                cmd = [
+                    "/usr/bin/claude",
+                    "-p",
+                    prompt,
+                    "--dangerously-skip-permissions",
+                ]
+            else:
+                cmd = [
+                    "/usr/bin/codex",
+                    "exec",
+                    "--cd",
+                    "/workspace",
+                    "--ephemeral",
+                    "--ignore-user-config",
+                    # Nested bwrap fails under this host's outer user namespace:
+                    # "No permissions to create new namespace". The outer
+                    # Bubblewrap boundary remains active around this process.
+                    "--dangerously-bypass-approvals-and-sandbox",
+                    prompt,
+                ]
+            return exec_agent(session_id, cmd, timeout=timeout)
         else:
             cmd = ["bash", "-c", prompt]
             res = self.exec_command(session_id, cmd, timeout=timeout)

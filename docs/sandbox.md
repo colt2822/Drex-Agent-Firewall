@@ -45,7 +45,7 @@ HOST ENVIRONMENT
    - `/tmp` (rw tmpfs): Ephemeral session scratch space.
    - Host `/`, `/root`, `/home`, and docker sockets (`/var/run/docker.sock`) are inaccessible.
 4. **Dropped Kernel Capabilities**: All Linux capabilities are dropped (`CAP_DROP ALL`). The sandbox operates entirely unprivileged without setuid or root escalation avenues.
-5. **Controlled Network Boundary**: Network egress is denied by default (`--unshare-net` in `none` and `firewall-only` modes) or routed via Drex adapters.
+5. **Controlled Network Boundary**: Network egress is denied by default (`--unshare-net` in `none` and `firewall-only` modes). The separate `controlled-online` mode also unshares networking and permits only exact provider CONNECT hostnames on TCP/443 through a loopback-only proxy and one mode-0600 per-session socket mounted at `/run/drex-egress.sock`. Host Docker, Podman, and SSH runtime sockets are not mounted. TLS SNI and encrypted URL paths are not inspected.
 6. **Complete Audit Trail**: Every sandbox session is tracked in SQLite with session duration, tool actions, and escape probe history.
 
 ---
@@ -58,8 +58,11 @@ HOST ENVIRONMENT
 # Run command inside isolated sandbox
 drex-firewall sandbox run --workspace /path/to/repo --policy safe-local-coding -- ls -la /workspace
 
-# Run Claude Code inside isolated sandbox
-drex-firewall sandbox run --workspace /path/to/repo --agent claude
+# Run a real authenticated Claude task through the controlled provider bridge
+drex-firewall sandbox demo --agent claude --network controlled-online
+
+# Run Codex with the explicit OpenAI/ChatGPT host policy
+drex-firewall sandbox demo --agent codex --network controlled-online
 ```
 
 ### 3.2 Interactive Confined Shell

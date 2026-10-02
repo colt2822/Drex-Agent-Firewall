@@ -213,9 +213,10 @@ def sandbox_destroy_cmd(session_id: str):
 @click.option("--policy", "-p", default="safe-local-coding", help="Policy pack to use")
 @click.option("--agent", "-a", default="claude", help="Agent executable (claude or codex)")
 @click.option("--backend", "-b", default="auto", help="Isolation backend (auto, bubblewrap, podman, docker)")
+@click.option("--network", default="firewall-only", type=click.Choice(["none", "firewall-only", "controlled-online"]), help="Network mode; controlled-online uses an agent-specific provider host policy")
 @click.option("--timeout", default=90, type=int, help="Agent timeout in seconds")
 @click.option("--escape-session", is_flag=True, help="Run dedicated defensive escape audit session with real agent")
-def sandbox_demo_cmd(policy: str, agent: str, backend: str, timeout: int, escape_session: bool):
+def sandbox_demo_cmd(policy: str, agent: str, backend: str, network: str, timeout: int, escape_session: bool):
     """Run real autonomous agent inside the isolated sandbox runtime."""
     from drex_agent_firewall.demo.real_agent_demo import RealAgentDemoRunner
 
@@ -232,7 +233,7 @@ def sandbox_demo_cmd(policy: str, agent: str, backend: str, timeout: int, escape
         workspace_path=repo_dir,
         policy_pack=policy,
         agent_type=agent,
-        network_mode="allowlisted",
+        network_mode=network,
     )
 
     console.print(f"[bold green]✔ Isolated sandbox session initialized: {info.session_id}[/bold green]")
@@ -240,6 +241,7 @@ def sandbox_demo_cmd(policy: str, agent: str, backend: str, timeout: int, escape
     console.print(f"  [cyan]Mounts:[/cyan] {repo_dir} -> /workspace (rw)")
     console.print(f"  [cyan]Host Home Isolation:[/cyan] ENFORCED (/home/agent isolated, no host ~/.ssh / ~/.aws)")
     console.print(f"  [cyan]Credentials Filter:[/cyan] ACTIVE (zero host environment variables inherited)\n")
+    console.print(f"  [cyan]Network Egress:[/cyan] {network} (agent provider hosts only when explicitly enabled)\n")
 
     try:
         if escape_session:

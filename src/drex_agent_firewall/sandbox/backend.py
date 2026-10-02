@@ -26,7 +26,7 @@ class SandboxSpec(BaseModel):
     policy_pack: str = "safe-local-coding"
     agent_type: str = "generic"
     config: Optional[FirewallConfig] = None
-    network_mode: str = "firewall-only"  # none, firewall-only, allowlisted, host
+    network_mode: str = "firewall-only"  # none, firewall-only, allowlisted, controlled-online, host
     workspace_mode: str = "rw"          # rw or ro
     expose_host_home: bool = False
     expose_host_root: bool = False

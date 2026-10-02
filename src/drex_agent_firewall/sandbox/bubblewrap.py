@@ -3,9 +3,14 @@
 from __future__ import annotations
 
 import logging
+import json
 import os
+import re
 import shutil
 import subprocess
+import socket
+import stat
+import tempfile
 import time
 from typing import Any, Dict, List, Optional
 
@@ -19,6 +24,9 @@ from drex_agent_firewall.sandbox.backend import (
 )
 
 logger = logging.getLogger(__name__)
+
+_SENSITIVE_AUTH_KEY = re.compile(r"(?i)(token|secret|api.?key|password|cookie|account)")
+_PROXY_LAUNCHER = "/opt/drex-firewall/src/drex_agent_firewall/sandbox/proxy_launcher.py"
 
 BLOCKED_SENSITIVE_ENV_PREFIXES = (
     "GITHUB_",
@@ -39,9 +47,18 @@ BLOCKED_SENSITIVE_ENV_EXACT = {
     "HTTP_PROXY",
     "HTTPS_PROXY",
     "ALL_PROXY",
+    "NO_PROXY",
+    "FTP_PROXY",
     "GIT_ASKPASS",
     "GIT_TERMINAL_PROMPT",
 }
+
+
+def _blocked_environment_name(name: str) -> bool:
+    normalized = name.upper()
+    return normalized in BLOCKED_SENSITIVE_ENV_EXACT or any(
+        normalized.startswith(prefix) for prefix in BLOCKED_SENSITIVE_ENV_PREFIXES
+    )
 
 
 class BubblewrapBackend(IsolationBackend):
@@ -99,6 +116,9 @@ class BubblewrapBackend(IsolationBackend):
         real_workspace = os.path.realpath(spec.workspace_path)
         real_home = os.path.realpath(os.path.expanduser("~"))
 
+        if spec.network_mode == "controlled-online" and spec.agent_type not in ("codex", "claude"):
+            raise ValueError("controlled-online requires agent_type='codex' or 'claude'")
+
         # Strictly prevent exposing root or host home as workspace
         if not spec.expose_host_root and real_workspace == "/":
             raise ValueError("Refusing to mount host root '/' as sandbox workspace")
@@ -109,6 +129,14 @@ class BubblewrapBackend(IsolationBackend):
                 "Use a subdirectory or set expose_host_home=True explicitly."
             )
 
+        protected_user_paths = [
+            os.path.join(real_home, ".local"),
+            os.path.join(real_home, ".codex"),
+        ]
+        for protected_path in protected_user_paths:
+            if real_workspace == protected_path or real_workspace.startswith(protected_path + os.sep):
+                raise ValueError(f"Refusing to mount protected host user data as workspace: {protected_path}")
+
         # Prevent symlink-supplied workspace paths that resolve to sensitive locations
         sensitive_prefixes = ["/root", "/etc", "/var/run", "/run", "/proc", "/sys", "/dev"]
         for prefix in sensitive_prefixes:
@@ -118,10 +146,11 @@ class BubblewrapBackend(IsolationBackend):
                 )
 
         # Create ephemeral session directory
-        session_tmp = f"/tmp/drex_sandbox_{spec.session_id}"
-        os.makedirs(session_tmp, exist_ok=True)
+        safe_session_id = re.sub(r"[^A-Za-z0-9_-]", "_", spec.session_id)[:48] or "session"
+        session_tmp = tempfile.mkdtemp(prefix=f"drex_sandbox_{safe_session_id}_")
+        os.chmod(session_tmp, 0o700)
         agent_home = os.path.join(session_tmp, "home")
-        os.makedirs(agent_home, exist_ok=True)
+        os.makedirs(agent_home, mode=0o700, exist_ok=True)
 
         # Create minimal synthetic passwd file
         passwd_path = os.path.join(session_tmp, "passwd")
@@ -130,60 +159,14 @@ class BubblewrapBackend(IsolationBackend):
             f.write("agent:x:1000:1000:Drex Agent:/home/agent:/bin/bash\n")
             f.write("nobody:x:65534:65534:nobody:/nonexistent:/bin/false\n")
 
-        # Create session bin directory with wrappers
+        # Session-local tool wrappers, if any. System-installed tools stay under
+        # the read-only /usr mount; host ~/.local is never mounted.
         session_bin = os.path.join(session_tmp, "bin")
         os.makedirs(session_bin, exist_ok=True)
-        # Discover Claude binary dynamically (no hardcoded personal paths)
-        real_claude = shutil.which("claude")
-        host_claude_path = None
-        if real_claude:
-            host_claude_path = os.path.realpath(real_claude)
-        else:
-            # Check common user-local installation path
-            user_claude_dir = os.path.expanduser("~/.local/share/claude/versions")
-            if os.path.isdir(user_claude_dir):
-                versions = sorted(os.listdir(user_claude_dir), reverse=True)
-                for v in versions:
-                    candidate = os.path.join(user_claude_dir, v)
-                    if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
-                        host_claude_path = candidate
-                        break
-        if host_claude_path and os.path.exists(host_claude_path):
-            # Resolve the in-sandbox path relative to /opt/agent_tools mount
-            user_local = os.path.expanduser("~/.local")
-            if host_claude_path.startswith(user_local):
-                sandbox_claude_path = "/opt/agent_tools" + host_claude_path[len(user_local):]
-            else:
-                sandbox_claude_path = host_claude_path
-            claude_wrapper = os.path.join(session_bin, "claude")
-            with open(claude_wrapper, "w") as f:
-                f.write(f"#!/bin/bash\nexec {sandbox_claude_path} \"$@\"\n")
-            os.chmod(claude_wrapper, 0o755)
 
-        # Runtime credential injection: narrowly scoped, opt-in, documented
-        # WHY: Claude Code requires its authentication token to function
-        # WHAT: Claude CLI session credential (API access for the agent's execution)
-        # HOW LONG: Ephemeral — destroyed with sandbox session tmpdir
-        # SCOPE: Only injected when agent_type is 'claude' and credentials exist
-        # NOT: host environment variables, not persisted to SQLite, not logged
-        if spec.agent_type == "claude":
-            claude_creds = os.path.expanduser("~/.claude/.credentials.json")
-            claude_json = os.path.expanduser("~/.claude.json")
-            injected_creds = []
-            if os.path.exists(claude_creds):
-                agent_claude_dir = os.path.join(agent_home, ".claude")
-                os.makedirs(agent_claude_dir, exist_ok=True)
-                shutil.copy(claude_creds, os.path.join(agent_claude_dir, ".credentials.json"))
-                injected_creds.append(".claude/.credentials.json")
-            if os.path.exists(claude_json):
-                shutil.copy(claude_json, os.path.join(agent_home, ".claude.json"))
-                injected_creds.append(".claude.json")
-            if injected_creds:
-                logger.info(
-                    "Sandbox %s: injected %d narrow runtime credential(s) for Claude agent: %s "
-                    "(ephemeral, destroyed with session)",
-                    spec.session_id, len(injected_creds), ", ".join(injected_creds),
-                )
+        hosts_path = os.path.join(session_tmp, "hosts")
+        with open(hosts_path, "w", encoding="ascii") as f:
+            f.write("127.0.0.1 localhost\n::1 localhost\n")
 
         self._sessions[spec.session_id] = {
             "spec": spec,
@@ -191,13 +174,20 @@ class BubblewrapBackend(IsolationBackend):
             "session_bin": session_bin,
             "agent_home": agent_home,
             "passwd_path": passwd_path,
+            "hosts_path": hosts_path,
             "real_workspace": real_workspace,
             "status": SandboxStatus.CREATED,
             "pids": set(),
         }
         return True
 
-    def _build_bwrap_args(self, spec: SandboxSpec, session_data: Dict[str, Any]) -> List[str]:
+    def _build_bwrap_args(
+        self,
+        spec: SandboxSpec,
+        session_data: Dict[str, Any],
+        runtime_auth_mount: Optional[str] = None,
+        egress_socket_path: Optional[str] = None,
+    ) -> List[str]:
         """Construct full bubblewrap isolation argument vector."""
         args = [self.bwrap_bin]
 
@@ -207,7 +197,7 @@ class BubblewrapBackend(IsolationBackend):
         args.extend(["--cap-drop", "ALL"])
 
         # Network Isolation — always unshare network namespace
-        if spec.network_mode in ("none", "firewall-only"):
+        if spec.network_mode in ("none", "firewall-only", "controlled-online"):
             args.append("--unshare-net")
         elif spec.network_mode == "allowlisted":
             # Always isolate network; allowlisted mode requires additional veth/iptables
@@ -242,14 +232,13 @@ class BubblewrapBackend(IsolationBackend):
             if os.path.exists(d):
                 args.extend(["--ro-bind", d, d])
 
-        # Selective /etc mounts — only required configuration, not full host /etc
+        # Selective /etc mounts — isolated network modes use a synthetic hosts
+        # file and do not receive the host resolver configuration.
         etc_required_files = [
             "/etc/ssl",             # CA certificates for TLS
             "/etc/ca-certificates", # CA certificate bundles
             "/etc/pki",             # PKI on RHEL-based systems
-            "/etc/resolv.conf",     # DNS resolution (needed even in isolated net for local resolution)
             "/etc/nsswitch.conf",   # Name service switch configuration
-            "/etc/hosts",           # Host resolution (sandbox may override)
             "/etc/ld.so.conf",      # Dynamic linker configuration
             "/etc/ld.so.conf.d",    # Dynamic linker configuration directory
             "/etc/ld.so.cache",     # Dynamic linker cache
@@ -260,8 +249,18 @@ class BubblewrapBackend(IsolationBackend):
             if os.path.exists(f):
                 args.extend(["--ro-bind", f, f])
 
-        # If network is enabled, mount resolv.conf target
-        if spec.network_mode not in ("none", "firewall-only"):
+        isolated_network_modes = ("none", "firewall-only", "allowlisted", "controlled-online")
+        if spec.network_mode in isolated_network_modes:
+            args.extend(["--ro-bind", session_data["hosts_path"], "/etc/hosts"])
+        else:
+            if os.path.exists("/etc/hosts"):
+                args.extend(["--ro-bind", "/etc/hosts", "/etc/hosts"])
+            if os.path.exists("/etc/resolv.conf"):
+                args.extend(["--ro-bind", "/etc/resolv.conf", "/etc/resolv.conf"])
+
+        # If an explicit non-isolated network mode is in use, mount resolver
+        # support. controlled-online never gets the host resolver.
+        if spec.network_mode not in isolated_network_modes:
             if os.path.exists("/run/systemd/resolve"):
                 args.extend(["--ro-bind", "/run/systemd/resolve", "/run/systemd/resolve"])
 
@@ -275,11 +274,23 @@ class BubblewrapBackend(IsolationBackend):
         args.extend(["--tmpfs", "/tmp"])
         args.extend(["--bind", session_data["agent_home"], "/home/agent"])
 
-        # Optional Agent Tools & Drex Read-Only mounts (to allow agent execution)
-        host_user_local = os.path.expanduser("~/.local")
-        if os.path.exists(host_user_local):
-            args.extend(["--ro-bind", host_user_local, "/opt/agent_tools"])
+        if egress_socket_path:
+            if not os.path.exists(egress_socket_path) or not stat.S_ISSOCK(os.stat(egress_socket_path).st_mode):
+                raise FileNotFoundError("Controlled egress bridge socket is unavailable")
+            args.extend(["--dir", "/run", "--ro-bind", egress_socket_path, "/run/drex-egress.sock"])
 
+        if runtime_auth_mount:
+            if not os.path.isfile(runtime_auth_mount):
+                raise FileNotFoundError("Ephemeral agent authentication file is missing")
+            if spec.agent_type == "codex":
+                auth_guest_path = "/home/agent/.codex/auth.json"
+            elif spec.agent_type == "claude":
+                auth_guest_path = "/home/agent/.claude/.credentials.json"
+            else:
+                raise ValueError("Runtime authentication is available only for supported agent types")
+            args.extend(["--ro-bind", runtime_auth_mount, auth_guest_path])
+
+        # Optional session-local tools and Drex read-only code mounts.
         if "session_bin" in session_data and os.path.exists(session_data["session_bin"]):
             args.extend(["--ro-bind", session_data["session_bin"], "/opt/agent_bin"])
 
@@ -311,32 +322,261 @@ class BubblewrapBackend(IsolationBackend):
     def _sanitize_environment(self, spec: SandboxSpec) -> Dict[str, str]:
         """Strip host credentials, sensitive keys, and construct allowlisted environment."""
         env: Dict[str, str] = {
-            "PATH": "/opt/agent_bin:/opt/agent_tools/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+            "PATH": "/opt/agent_bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
             "HOME": "/home/agent",
             "USER": "agent",
             "SHELL": "/bin/bash",
             "LANG": "C.UTF-8",
             "LC_ALL": "C.UTF-8",
             "TERM": "xterm-256color",
-            "PYTHONPATH": "/opt/drex-firewall/src:/opt/agent_tools/lib/python3.12/site-packages",
+            "PYTHONPATH": "/opt/drex-firewall/src",
         }
+
+        if spec.network_mode == "controlled-online":
+            from drex_agent_firewall.sandbox.controlled_egress import AGENT_EGRESS_ALLOWLISTS
+
+            allowed_hosts = AGENT_EGRESS_ALLOWLISTS.get(spec.agent_type)
+            if not allowed_hosts:
+                raise ValueError("controlled-online requires a supported authenticated agent type")
+            env["DREX_EGRESS_HOSTS"] = ",".join(sorted(allowed_hosts))
+            if spec.agent_type == "codex":
+                env["CODEX_HOME"] = "/home/agent/.codex"
+            elif spec.agent_type == "claude":
+                env["CLAUDE_CONFIG_DIR"] = "/home/agent/.claude"
 
         # Transfer only allowlisted environment variables that are safe
         for key in spec.env_allowlist:
             if key in os.environ and key not in env:
                 # Strictly check blocked prefixes and names
-                if any(key.startswith(p) for p in BLOCKED_SENSITIVE_ENV_PREFIXES):
-                    continue
-                if key in BLOCKED_SENSITIVE_ENV_EXACT:
+                if _blocked_environment_name(key):
                     continue
                 env[key] = os.environ[key]
 
         # Apply explicit overrides from spec (if not blocked)
         for k, v in spec.env_overrides.items():
-            if not any(k.startswith(p) for p in BLOCKED_SENSITIVE_ENV_PREFIXES) and k not in BLOCKED_SENSITIVE_ENV_EXACT:
+            if not _blocked_environment_name(k):
                 env[k] = v
 
         return env
+
+    @staticmethod
+    def _collect_auth_secrets(value: Any, parent_key: str = "") -> List[str]:
+        secrets: List[str] = []
+        if isinstance(value, dict):
+            for key, child in value.items():
+                if _SENSITIVE_AUTH_KEY.search(str(key)) and isinstance(child, str) and len(child) >= 6:
+                    secrets.append(child)
+                else:
+                    secrets.extend(BubblewrapBackend._collect_auth_secrets(child, str(key)))
+        elif isinstance(value, list):
+            for child in value:
+                secrets.extend(BubblewrapBackend._collect_auth_secrets(child, parent_key))
+        return secrets
+
+    @staticmethod
+    def _redact_runtime_auth(text: str, secret_values: List[str]) -> str:
+        for secret in sorted(set(secret_values), key=len, reverse=True):
+            text = text.replace(secret, "[REDACTED]")
+        return text
+
+    def _stage_runtime_auth(self, spec: SandboxSpec, session_data: Dict[str, Any]) -> tuple[str, List[str]]:
+        """Create one minimal ephemeral auth file for this requested agent call."""
+        if spec.agent_type == "codex":
+            source = os.path.expanduser("~/.codex/auth.json")
+            guest_dir = os.path.join(session_data["agent_home"], ".codex")
+            guest_file = os.path.join(guest_dir, "auth.json")
+            if not os.path.isfile(source):
+                raise RuntimeError("Codex authentication is missing: expected the existing ~/.codex/auth.json login")
+            try:
+                with open(source, "r", encoding="utf-8") as f:
+                    original = json.load(f)
+            except (OSError, json.JSONDecodeError) as exc:
+                raise RuntimeError("Codex authentication file is unreadable or invalid JSON") from exc
+            if original.get("auth_mode") != "chatgpt":
+                raise RuntimeError("Controlled Codex mode currently requires an existing ChatGPT OAuth login")
+            tokens = original.get("tokens")
+            if not isinstance(tokens, dict) or not all(isinstance(tokens.get(k), str) and tokens[k] for k in ("access_token", "id_token", "refresh_token", "account_id")):
+                raise RuntimeError("Codex ChatGPT OAuth auth file is missing required token fields")
+            minimal_auth = {
+                "auth_mode": "chatgpt",
+                "tokens": {key: tokens[key] for key in ("access_token", "id_token", "refresh_token", "account_id")},
+            }
+            if isinstance(original.get("last_refresh"), str):
+                minimal_auth["last_refresh"] = original["last_refresh"]
+            secret_values = self._collect_auth_secrets(minimal_auth)
+        elif spec.agent_type == "claude":
+            source = os.path.expanduser("~/.claude/.credentials.json")
+            guest_dir = os.path.join(session_data["agent_home"], ".claude")
+            guest_file = os.path.join(guest_dir, ".credentials.json")
+            if not os.path.isfile(source):
+                raise RuntimeError("Claude authentication is missing: expected the existing ~/.claude/.credentials.json login")
+            try:
+                with open(source, "r", encoding="utf-8") as f:
+                    minimal_auth = json.load(f)
+            except (OSError, json.JSONDecodeError) as exc:
+                raise RuntimeError("Claude authentication file is unreadable or invalid JSON") from exc
+            if not isinstance(minimal_auth, dict) or not minimal_auth:
+                raise RuntimeError("Claude authentication file has no usable credential data")
+            secret_values = self._collect_auth_secrets(minimal_auth)
+        else:
+            raise RuntimeError("Controlled online mode supports only Codex and Claude agents")
+
+        os.makedirs(guest_dir, mode=0o700, exist_ok=True)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        fd = os.open(guest_file, flags, 0o400)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(minimal_auth, f, separators=(",", ":"))
+                f.flush()
+                os.fsync(f.fileno())
+            os.chmod(guest_file, 0o400)
+        except Exception:
+            try:
+                os.unlink(guest_file)
+            except OSError:
+                pass
+            raise
+        return guest_file, secret_values
+
+    @staticmethod
+    def _required_system_agent_binary(agent_type: str) -> str:
+        binaries = {"codex": "/usr/bin/codex", "claude": "/usr/bin/claude"}
+        binary = binaries.get(agent_type)
+        if not binary or not os.path.isfile(binary) or not os.access(binary, os.X_OK):
+            raise FileNotFoundError(
+                f"Required system-installed {agent_type} executable is unavailable; "
+                "no ~/.local fallback is permitted"
+            )
+        if not os.path.isfile("/usr/bin/python3") or not os.access("/usr/bin/python3", os.X_OK):
+            raise FileNotFoundError("Required system-installed /usr/bin/python3 is unavailable for the controlled proxy")
+        if not os.path.isfile(os.path.join(os.path.dirname(__file__), "proxy_launcher.py")):
+            raise FileNotFoundError("Controlled proxy launcher is unavailable")
+        return binary
+
+    def exec_agent(
+        self,
+        session_id: str,
+        command: List[str],
+        timeout: Optional[float] = None,
+        input: Optional[str] = None,
+    ) -> SandboxResult:
+        """Run one authenticated agent call with the private controlled egress bridge."""
+        if session_id not in self._sessions:
+            raise KeyError(f"Unknown sandbox session: {session_id}")
+        session_data = self._sessions[session_id]
+        spec: SandboxSpec = session_data["spec"]
+        if spec.network_mode != "controlled-online":
+            raise RuntimeError("Authenticated agent execution requires explicit network_mode='controlled-online'")
+        if spec.agent_type not in ("codex", "claude"):
+            raise RuntimeError("controlled-online supports only the explicitly requested Codex or Claude agent")
+
+        from drex_agent_firewall.sandbox.controlled_egress import (
+            AGENT_EGRESS_ALLOWLISTS,
+            ControlledEgressBroker,
+        )
+
+        binary = self._required_system_agent_binary(spec.agent_type)
+        if not command or os.path.realpath(command[0]) != os.path.realpath(binary):
+            raise RuntimeError("Controlled online mode accepts only the system-installed agent executable")
+        launcher_guest = _PROXY_LAUNCHER
+        launcher_host = os.path.join(os.path.dirname(__file__), "proxy_launcher.py")
+        if not os.path.isfile(launcher_host):
+            raise FileNotFoundError("Controlled proxy launcher is unavailable")
+
+        runtime_auth_path, secret_values = self._stage_runtime_auth(spec, session_data)
+        broker: Optional[ControlledEgressBroker] = None
+        proc: Optional[subprocess.Popen] = None
+        start_t = time.perf_counter()
+        exec_timeout = timeout or spec.limits.timeout_seconds
+        try:
+            bridge_path = os.path.join(session_data["session_tmp"], "egress.sock")
+            broker = ControlledEgressBroker(bridge_path, AGENT_EGRESS_ALLOWLISTS[spec.agent_type])
+            broker.start()
+
+            bwrap_args = self._build_bwrap_args(
+                spec,
+                session_data,
+                runtime_auth_mount=runtime_auth_path,
+                egress_socket_path=bridge_path,
+            )
+            bwrap_args.extend([
+                "--",
+                "/usr/bin/python3",
+                launcher_guest,
+                "--bridge-socket",
+                "/run/drex-egress.sock",
+                "--",
+                binary,
+                *command[1:],
+            ])
+
+            clean_launcher_env = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}
+            proc = subprocess.Popen(
+                bwrap_args,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=clean_launcher_env,
+            )
+            stdout_str, stderr_str = proc.communicate(input=input, timeout=exec_timeout)
+            duration = time.perf_counter() - start_t
+            stdout_str = self._redact_runtime_auth(stdout_str, secret_values)
+            stderr_str = self._redact_runtime_auth(stderr_str, secret_values)
+            if len(stdout_str) > spec.limits.max_output_bytes:
+                stdout_str = stdout_str[:spec.limits.max_output_bytes] + "\n... [TRUNCATED]"
+            if len(stderr_str) > spec.limits.max_output_bytes:
+                stderr_str = stderr_str[:spec.limits.max_output_bytes] + "\n... [TRUNCATED]"
+            if broker.error and proc.returncode == 0:
+                return SandboxResult(
+                    returncode=125,
+                    stdout=stdout_str,
+                    stderr="Controlled egress bridge failed; no host-network fallback was attempted.",
+                    duration_seconds=round(duration, 3),
+                )
+            return SandboxResult(
+                returncode=proc.returncode,
+                stdout=stdout_str,
+                stderr=stderr_str,
+                duration_seconds=round(duration, 3),
+            )
+        except subprocess.TimeoutExpired:
+            if proc is not None:
+                proc.kill()
+                stdout_str, stderr_str = proc.communicate()
+                stdout_str = self._redact_runtime_auth(stdout_str, secret_values)
+                stderr_str = self._redact_runtime_auth(stderr_str, secret_values)
+                if len(stdout_str) > spec.limits.max_output_bytes:
+                    stdout_str = stdout_str[:spec.limits.max_output_bytes] + "\n... [TRUNCATED]"
+                if len(stderr_str) > spec.limits.max_output_bytes:
+                    stderr_str = stderr_str[:spec.limits.max_output_bytes] + "\n... [TRUNCATED]"
+            else:
+                stdout_str, stderr_str = "", ""
+            return SandboxResult(
+                returncode=124,
+                stdout=stdout_str,
+                stderr=stderr_str + f"\n[DREX_SANDBOX_TIMEOUT]: Execution timed out after {exec_timeout}s",
+                duration_seconds=round(time.perf_counter() - start_t, 3),
+                timed_out=True,
+            )
+        except Exception as exc:
+            # Keep auth data and host paths out of the returned failure message.
+            return SandboxResult(
+                returncode=-1,
+                stderr=f"Controlled online execution failed closed: {type(exc).__name__}: {str(exc)} (no host-network fallback)",
+                duration_seconds=round(time.perf_counter() - start_t, 3),
+                error=type(exc).__name__,
+            )
+        finally:
+            if proc is not None and proc.poll() is None:
+                proc.kill()
+                proc.wait()
+            if broker is not None:
+                broker.close()
+            try:
+                os.unlink(runtime_auth_path)
+            except OSError:
+                pass
 
     def launch(self, spec: SandboxSpec) -> SandboxSessionInfo:
         """Initialize session and verify boundary."""
@@ -402,7 +642,7 @@ class BubblewrapBackend(IsolationBackend):
         # Extra environment variables for this exec
         if env:
             for k, v in env.items():
-                if not any(k.startswith(p) for p in BLOCKED_SENSITIVE_ENV_PREFIXES) and k not in BLOCKED_SENSITIVE_ENV_EXACT:
+                if not _blocked_environment_name(k):
                     bwrap_args.extend(["--setenv", k, v])
 
         # Append target command
@@ -413,10 +653,11 @@ class BubblewrapBackend(IsolationBackend):
         try:
             proc = subprocess.Popen(
                 bwrap_args,
-                stdin=subprocess.PIPE if input is not None else None,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
+                env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
             )
             session_data["pids"].add(proc.pid)
 

@@ -125,7 +125,7 @@ class SandboxConfig(BaseModel):
     expose_host_home: bool = Field(default=False, description="Strictly false: never mount host $HOME")
     expose_host_root: bool = Field(default=False, description="Strictly false: never mount host root /")
     expose_container_socket: bool = Field(default=False, description="Strictly false: never mount /var/run/docker.sock")
-    network_mode: str = Field(default="firewall-only", description="'none', 'firewall-only', 'allowlisted', 'host'")
+    network_mode: str = Field(default="firewall-only", description="'none', 'firewall-only', 'allowlisted', 'controlled-online', 'host'")
     inherit_env: bool = Field(default=False, description="Strictly false: do not inherit host environment")
     env_allowlist: List[str] = Field(
         default_factory=lambda: ["PATH", "LANG", "LC_ALL", "TERM", "USER", "HOME", "SHELL", "PYTHONPATH"]
