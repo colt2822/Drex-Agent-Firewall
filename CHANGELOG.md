@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.3rc1 (candidate)
+
+Descriptor-based filesystem race/hardlink hardening, workspace capability scanning
+and inode pinning, read-only synthetic root, required cgroup resource controls,
+bounded scratch/egress broker, effective policy snapshots, native run receipts,
+installed-wheel mounts, OCI image/command lifecycle and substantive CI repair.
+Release gates remain open; see RELEASE_NOTES_v0.1.3rc1.md.
+
+
 All notable changes to the Drex Agent Firewall project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),

@@ -1,3 +1,5 @@
+> v0.1.3rc1 is a hardening candidate, not release-ready. See [current validation and open gates](docs/HARDENING_VALIDATION.md).
+
 # Drex Agent Firewall
 
 > Deterministic policy and execution control for coding agents, powered by Drex.
@@ -260,7 +262,7 @@ HOST ENVIRONMENT
 
 ### Limitations
 - Bubblewrap **shares the host Linux kernel**. It is not a microVM, hypervisor, or formal verification boundary.
-- **No cgroup-based resource limits** are enforced by Bubblewrap alone. Timeout enforcement and output truncation provide partial mitigation.
+- **Delegated cgroup-v2 controllers are required** by the v0.1.3rc1 Bubblewrap candidate. Writable workspace aggregate disk/inode quotas remain unresolved.
 - The MCP policy layer is not mandatory mediation. Agents with native shell or filesystem access can perform workspace actions without calling the MCP server; the outer sandbox limits some host access but does not make every effect policy checked.
 - Managed sessions use a host-private SQLite store and a per-session append-oriented Unix-socket capability. In tested managed Bubblewrap sessions, native attacks could not read, write, delete, or replace the authoritative store. OCI runtime behavior remains unvalidated. Standalone MCP/SDK databases remain caller-selected and can be tampered with by same-UID host execution. Global RT-03 remains unresolved; see [RT-03 evidence and limits](security/rt03/REPORT.md).
 - Resource controls vary by backend. Bubblewrap does not enforce CPU, memory, or file-descriptor quotas; configured command timeouts, output limits, and namespace boundaries do not prevent every resource exhaustion attack.

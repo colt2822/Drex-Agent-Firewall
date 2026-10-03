@@ -52,7 +52,7 @@ HOST ENVIRONMENT
 
 - MCP is not mandatory mediation: native shell and filesystem actions may bypass its policy checks.
 - FWA-U3 is still globally unresolved pending OCI runtime validation and a real-agent canary. The Bubblewrap candidate's native filesystem prevention is demonstrated; standalone MCP/SDK stores remain caller-controlled and tamperable by same-UID host execution.
-- Bubblewrap does not enforce cgroup CPU, memory, or file-descriptor quotas (FWA-U1). Resource exhaustion remains possible.
+- The v0.1.3rc1 candidate requires delegated CPU/memory/PID cgroups and inherited FD/file-size limits. Aggregate workspace disk/inode quotas remain unresolved (FWA-U1).
 - The runtime shares the host kernel and is defense-in-depth, not a complete authoritative security boundary.
 
 The default managed store is the trusted host launcher's
