@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "drex-agent-firewall"
-version = "0.1.2"
+version = "0.1.3rc1"
 description = "A probabilistic policy and decision firewall for autonomous AI agents, powered by Drex."
 readme = "README.md"
 requires-python = ">=3.10"

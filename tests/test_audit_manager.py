@@ -21,6 +21,11 @@ def test_session_mcp_config_does_not_follow_workspace_symlink(tmp_path):
     link.symlink_to(outside)
 
     manager = SandboxManager.__new__(SandboxManager)
+    from drex_agent_firewall.schemas.config import FirewallConfig
+    import hashlib
+    snapshot = FirewallConfig().model_dump(mode="json", exclude={"provider": {"api_key"}})
+    digest = hashlib.sha256(json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    manager._policy_snapshots = {"symlink-canary": (snapshot, digest)}
     config_path = manager._generate_mcp_config(str(workspace), "safe-local-coding", "symlink-canary", "claude")
 
     assert outside.read_text(encoding="utf-8") == "unchanged host canary"

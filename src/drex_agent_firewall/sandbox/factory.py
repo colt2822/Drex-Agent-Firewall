@@ -40,7 +40,7 @@ def get_isolation_backend(backend_type: str = "auto") -> IsolationBackend:
     if clean_type == "bubblewrap" or clean_type == "bwrap":
         bwrap = BubblewrapBackend()
         if not bwrap.is_available():
-            raise RuntimeError("Bubblewrap (bwrap) isolation runtime is not installed or available on this system")
+            raise RuntimeError("SANDBOX_UNAVAILABLE: Bubblewrap (bwrap) isolation runtime is not installed or available on this system")
         return bwrap
 
     if clean_type == "podman":

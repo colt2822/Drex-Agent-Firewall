@@ -52,6 +52,18 @@ CREATE TABLE IF NOT EXISTS audit_actions (
     outcome_recorded_at REAL
 );
 
+CREATE TABLE IF NOT EXISTS native_runs (
+    run_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    policy_digest TEXT NOT NULL,
+    started_at REAL NOT NULL,
+    completed_at REAL,
+    process_class TEXT NOT NULL,
+    returncode INTEGER,
+    timed_out INTEGER,
+    error_class TEXT
+);
+
 CREATE TABLE IF NOT EXISTS sandbox_sessions (
     session_id TEXT PRIMARY KEY,
     runtime_backend TEXT NOT NULL,

@@ -315,10 +315,21 @@ def main() -> None:
     parser.add_argument("--agent-id", default="claude-code", help="Agent identifier")
     parser.add_argument("--session-id", default="real-agent-demo", help="Session ID")
     parser.add_argument("--live-drex", action="store_true", help="Enable live Drex API provider")
+    parser.add_argument("--policy-file", help="Host-generated pinned policy snapshot")
+    parser.add_argument("--policy-digest", help="Expected SHA256 of the effective policy")
     parser.add_argument("--host-audit", action="store_true", help="Require the fixed host audit socket; never open a guest DB")
     args = parser.parse_args()
 
-    config = FirewallConfig.from_pack(args.policy)
+    if args.policy_file:
+        import hashlib
+        with open(args.policy_file, encoding="utf-8") as stream:
+            snapshot = json.load(stream)["drexPolicy"]
+        digest = hashlib.sha256(json.dumps(snapshot["config"], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        if snapshot["version"] != 1 or digest != args.policy_digest or digest != snapshot["digest"]:
+            raise RuntimeError("POLICY_INVALID: snapshot digest mismatch")
+        config = FirewallConfig.model_validate(snapshot["config"])
+    else:
+        config = FirewallConfig.from_pack(args.policy)
     config.filesystem.allowed_roots = [os.path.abspath(args.workspace)]
     if args.live_drex:
         config.provider.type = "drex"

@@ -337,12 +337,18 @@ def create_app(firewall: Optional[DrexFirewall] = None) -> FastAPI:
     def test_sandbox_escape() -> Dict[str, Any]:
         from drex_agent_firewall.sandbox.manager import SandboxManager
         from drex_agent_firewall.sandbox.probes import SandboxEscapeProbeRunner
-        mgr = SandboxManager()
-        info = mgr.create_session(workspace_path=".", policy_pack="safe-local-coding")
-        runner = SandboxEscapeProbeRunner(mgr)
-        results = runner.run_all_probes(info.session_id)
-        mgr.destroy_session(info.session_id)
-        return {"session_id": info.session_id, "backend": info.backend_name, "probes": results}
+        import tempfile
+        with tempfile.TemporaryDirectory(prefix="drex-api-escape-") as workspace:
+            mgr = SandboxManager()
+            info = None
+            try:
+                info = mgr.create_session(workspace_path=workspace, policy_pack="safe-local-coding")
+                results = SandboxEscapeProbeRunner(mgr).run_all_probes(info.session_id)
+                return {"session_id": info.session_id, "backend": info.backend_name, "probes": results}
+            finally:
+                if info:
+                    mgr.destroy_session(info.session_id)
+                mgr.repository.conn.close()
 
     # 8. Static files and Web UI
     static_dir = Path(__file__).parent.parent / "web" / "static"

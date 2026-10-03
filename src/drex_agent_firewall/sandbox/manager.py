@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import platform
 import logging
 import os
 import tempfile
@@ -52,6 +54,7 @@ class SandboxManager:
         self.backend: IsolationBackend = get_isolation_backend(backend_type)
         self._mcp_config_paths: Dict[str, str] = {}
         self._audit_brokers: Dict[str, AuditBroker] = {}
+        self._policy_snapshots = {}
 
     def create_session(
         self,
@@ -59,7 +62,7 @@ class SandboxManager:
         policy_pack: str = "safe-local-coding",
         agent_type: str = "claude",
         network_mode: Optional[str] = None,
-        workspace_mode: str = "rw",
+        workspace_mode: Optional[str] = None,
         session_id: Optional[str] = None,
         limits: Optional[SandboxLimits] = None,
         config: Optional[FirewallConfig] = None,
@@ -73,9 +76,22 @@ class SandboxManager:
             raise FileNotFoundError(f"Target workspace does not exist: {abs_workspace}")
 
         # Load policy pack configuration
-        cfg = config or get_policy_pack(policy_pack)
+        pack = get_policy_pack(policy_pack)
+        cfg = FirewallConfig.model_validate((config or pack).model_dump())
+        if cfg.provider.api_key is not None:
+            raise ValueError("POLICY_INVALID: credentials must not be stored in managed policy snapshots")
         net_mode = network_mode or cfg.sandbox.network_mode
+        workspace_mode = workspace_mode or cfg.sandbox.workspace_mode
+        if cfg.sandbox.workspace_mode == "ro" and workspace_mode != "ro":
+            raise ValueError("POLICY_INVALID: cannot broaden a read-only workspace")
         lims = limits or cfg.sandbox.limits
+        cfg.filesystem.allowed_roots = ["/workspace"]
+        cfg.sandbox.network_mode = net_mode
+        cfg.sandbox.workspace_mode = workspace_mode
+        cfg.sandbox.limits = lims
+        snapshot = cfg.model_dump(mode="json", exclude={"provider": {"api_key"}})
+        policy_digest = hashlib.sha256(json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        self._policy_snapshots[sid] = (snapshot, policy_digest)
 
         if self.repository.get_sandbox_session(sid):
             raise ValueError("Sandbox session identity already exists; refusing history replacement")
@@ -87,7 +103,11 @@ class SandboxManager:
                 "FAIL-CLOSED: NoIsolation cannot protect host audit history from same-UID native execution; "
                 "audited sessions require an isolation backend"
             )
-        broker = AuditBroker(self.repository, sid, f"{agent_type}-sandboxed")
+        try:
+            broker = AuditBroker(self.repository, sid, f"{agent_type}-sandboxed")
+        except Exception:
+            self._policy_snapshots.pop(sid, None)
+            raise
         self._audit_brokers[sid] = broker
         try:
             validate_audit_mounts(broker.socket_path, abs_workspace, cfg.sandbox.extra_mounts, code_root)
@@ -151,11 +171,17 @@ class SandboxManager:
                     "limits": lims.model_dump(),
                     "workspace_mode": workspace_mode,
                     "mcp_config_path": mcp_cfg_path,
+                    "policy_version": 1,
+                    "policy_digest": policy_digest,
+                    "firewall_version": __import__("drex_agent_firewall").__version__,
+                    "python_version": platform.python_version(),
                 },
             )
 
             # Launch backend
             info = self.backend.launch(spec)
+            if hasattr(info, "metadata"):
+                info.metadata.update({"policy_version": 1, "policy_digest": policy_digest, "firewall_version": __import__("drex_agent_firewall").__version__})
             return info
 
         except Exception as e:
@@ -204,6 +230,11 @@ class SandboxManager:
                 }
             }
         }
+        snapshot, digest = self._policy_snapshots[session_id]
+        mcp_cfg["drexPolicy"] = {"version": 1, "digest": digest, "config": snapshot}
+        mcp_cfg["mcpServers"]["drex_firewall"]["args"].extend([
+            "--policy-file", "/tmp/.drex_mcp_config.json", "--policy-digest", digest,
+        ])
         private_dir = tempfile.mkdtemp(prefix="drex-mcp-config-")
         os.chmod(private_dir, 0o700)
         fd, cfg_file = tempfile.mkstemp(
@@ -230,6 +261,7 @@ class SandboxManager:
         return cfg_file
 
     def _remove_mcp_config(self, session_id: str) -> None:
+        self._policy_snapshots.pop(session_id, None)
         path = self._mcp_config_paths.pop(session_id, None)
         if path:
             try:
@@ -311,6 +343,8 @@ class SandboxManager:
                     f'mcp_servers.drex_firewall.env={self._toml_inline_table(mcp_server.get("env", {}))}',
                     prompt,
                 ]
+            if hasattr(self, "_policy_snapshots"):
+                self._validate_pinned_policy(session_id)
             return exec_agent(session_id, cmd, timeout=timeout)
         else:
             cmd = ["bash", "-c", prompt]
@@ -338,6 +372,20 @@ class SandboxManager:
             pairs.append(f"{json.dumps(key)} = {json.dumps(item)}")
         return "{ " + ", ".join(pairs) + " }"
 
+    def _validate_pinned_policy(self, session_id):
+        expected = self._policy_snapshots.get(session_id)
+        path = self._mcp_config_paths.get(session_id)
+        if not expected or not path:
+            raise RuntimeError("POLICY_INVALID: pinned snapshot unavailable")
+        try:
+            with open(path, encoding="utf-8") as stream:
+                stored = json.load(stream)["drexPolicy"]
+            digest = hashlib.sha256(json.dumps(stored["config"], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+            if stored["version"] != 1 or digest != expected[1] or stored["digest"] != digest:
+                raise ValueError("digest mismatch")
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise RuntimeError("POLICY_INVALID: pinned snapshot verification failed") from exc
+
     def exec_command(
         self,
         session_id: str,
@@ -348,9 +396,25 @@ class SandboxManager:
         input: Optional[str] = None,
     ) -> SandboxResult:
         """Run arbitrary command confined inside the active sandbox."""
+        if self.backend.status(session_id) != SandboxStatus.RUNNING:
+            raise RuntimeError("SESSION_NOT_RUNNING")
+        broker = self._audit_brokers.get(session_id)
+        policy_path = self._mcp_config_paths.get(session_id)
+        if broker is None or not os.path.exists(broker.socket_path) or not policy_path:
+            raise RuntimeError("AUDIT_UNAVAILABLE")
+        self._load_mcp_server_config(policy_path)
+        self._validate_pinned_policy(session_id)
+        # A durable intent is necessary before native execution; no command data
+        # or sensitive environment is copied into the host receipt.
+        self.repository.update_sandbox_session(session_id=session_id, status="RUNNING")
         start_t = time.time()
+        run_id = uuid.uuid4().hex
+        with self.repository.conn:
+            self.repository.conn.execute("INSERT INTO native_runs(run_id,session_id,policy_digest,started_at,process_class) VALUES(?,?,?,?,?)", (run_id, session_id, self._policy_snapshots[session_id][1], start_t, "native-command"))
         res = self.backend.exec(session_id, command, cwd=cwd, env=env, timeout=timeout, input=input)
         duration = time.time() - start_t
+        with self.repository.conn:
+            self.repository.conn.execute("UPDATE native_runs SET completed_at=?,returncode=?,timed_out=?,error_class=? WHERE run_id=?", (time.time(), res.returncode, int(res.timed_out), "RUNTIME_ERROR" if res.error else None, run_id))
 
         # Update session metrics in repository
         actions = self.repository.get_actions_for_sandbox(session_id)
