@@ -75,6 +75,11 @@ class ContainerCLIBackend(IsolationBackend):
             "--cap-drop", "ALL",
             "--security-opt", "no-new-privileges",
         ]
+        # The private IPC socket is owned by the trusted host UID. Rootless
+        # Podman must retain that mapping; Docker runs with the same numeric UID.
+        if self.name == "podman":
+            run_args.extend(["--userns", "keep-id"])
+        run_args.extend(["--user", f"{os.getuid()}:{os.getgid()}"])
 
         # The OCI default is a bridged network with general egress. Every mode
         # except the explicit host opt-out must start network-isolated because

@@ -1,0 +1,42 @@
+[
+  {
+    "attack": "readonly_connection",
+    "precondition": "disposable standalone release MCP store; same UID native path or SQLite failure",
+    "result": "NameError",
+    "audit_history_changed": false,
+    "detected": true,
+    "action_fails_closed": true,
+    "protected_effect_created": false,
+    "security_impact": "persistence error prevents effect; history may already be damaged"
+  },
+  {
+    "attack": "unwritable_path",
+    "precondition": "disposable standalone release MCP store; same UID native path or SQLite failure",
+    "result": "OperationalError",
+    "audit_history_changed": false,
+    "detected": true,
+    "action_fails_closed": true,
+    "protected_effect_created": false,
+    "security_impact": "persistence error prevents effect; history may already be damaged"
+  },
+  {
+    "attack": "incompatible_directory",
+    "precondition": "disposable standalone release MCP store; same UID native path or SQLite failure",
+    "result": "OperationalError",
+    "audit_history_changed": true,
+    "detected": true,
+    "action_fails_closed": true,
+    "protected_effect_created": false,
+    "security_impact": "persistence error prevents effect; history may already be damaged"
+  },
+  {
+    "attack": "valid_empty_session_reuse",
+    "precondition": "disposable standalone release MCP store; same UID native path or SQLite failure",
+    "result": "allowed",
+    "audit_history_changed": true,
+    "detected": false,
+    "action_fails_closed": false,
+    "protected_effect_created": true,
+    "security_impact": "fresh session silently accepts missing history"
+  }
+]

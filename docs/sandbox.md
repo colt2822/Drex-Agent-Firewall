@@ -46,14 +46,30 @@ HOST ENVIRONMENT
    - Host `/`, `/root`, `/home`, and docker sockets (`/var/run/docker.sock`) are inaccessible.
 4. **Dropped Kernel Capabilities**: All Linux capabilities are dropped (`CAP_DROP ALL`). The sandbox operates entirely unprivileged without setuid or root escalation avenues.
 5. **Controlled Network Boundary**: Network egress is denied by default (`--unshare-net` in `none` and `firewall-only` modes). The separate `controlled-online` mode also unshares networking and permits only exact provider CONNECT hostnames on TCP/443 through a loopback-only proxy and one mode-0600 per-session socket mounted at `/run/drex-egress.sock`. Host Docker, Podman, and SSH runtime sockets are not mounted. TLS SNI and encrypted URL paths are not inspected.
-6. **Diagnostic Audit Records**: Sandbox sessions and mediated tool actions are recorded in SQLite. The current MCP database is stored in the writable workspace and can be modified or deleted by the agent; direct native actions may bypass MCP records. Do not treat this database as a complete or tamper-proof audit trail.
+6. **Managed Audit Store Candidate**: The host manager opens a private SQLite DB outside workspace and runtime mounts. Only its per-session append socket is visible to MCP/native guest processes. Immutable event snapshots preserve committed history; compatible API/CLI rows provide inspection. Tested Bubblewrap native tamper attempts failed, but native actions may still bypass audit creation. This is not complete audit coverage or protection against a trusted host owner.
 
 ## 2.1 Known Limitations
 
 - MCP is not mandatory mediation: native shell and filesystem actions may bypass its policy checks.
-- The MCP audit database is agent-writable in the current layout (FWA-U3).
+- FWA-U3 is still globally unresolved pending OCI runtime validation and a real-agent canary. The Bubblewrap candidate's native filesystem prevention is demonstrated; standalone MCP/SDK stores remain caller-controlled and tamperable by same-UID host execution.
 - Bubblewrap does not enforce cgroup CPU, memory, or file-descriptor quotas (FWA-U1). Resource exhaustion remains possible.
 - The runtime shares the host kernel and is defense-in-depth, not a complete authoritative security boundary.
+
+The default managed store is the trusted host launcher's
+`~/.local/state/drex-agent-firewall/audit/history.db` (parent 0700, DB/sidecars
+0600). Cleanup removes only session resources and IPC/config files, retaining
+history. Use `sandbox list --audit-db PATH` / `sandbox inspect SESSION --audit-db
+PATH` for trusted host inspection. NoIsolation is rejected by SandboxManager;
+its raw backend remains development-only and unsafe. There is no TCP audit
+listener, arbitrary-SQL IPC, hash chain, or independent rollback anchor.
+
+IPC handles one request at a time, with a backlog of two, 128 KiB frames, three
+second absolute frame deadlines and a 16 MiB durable payload budget per host-created
+session. Budget/persistence failure prevents a protected action's execution when
+its decision cannot be committed. Failure when recording a result after an
+effect is surfaced, but cannot undo the effect. Existing event snapshots remain
+available even if a reporting-projection write fails. Disk growth across trusted
+sessions and general runtime resource quotas still need independent controls.
 
 ---
 

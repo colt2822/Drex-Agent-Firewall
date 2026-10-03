@@ -11,6 +11,7 @@ import uuid
 from typing import Any, Dict, List, Optional
 
 from drex_agent_firewall.persistence.repository import ActionRepository
+from drex_agent_firewall.persistence.audit_broker import AuditBroker, GUEST_SOCKET, private_database_path, validate_audit_mounts
 from drex_agent_firewall.policy.packs import get_policy_pack
 from drex_agent_firewall.sandbox.backend import (
     IsolationBackend,
@@ -21,6 +22,7 @@ from drex_agent_firewall.sandbox.backend import (
     SandboxStatus,
 )
 from drex_agent_firewall.sandbox.factory import get_isolation_backend
+from drex_agent_firewall.sandbox.python_runtime import python_dependency_mounts
 from drex_agent_firewall.schemas.config import FirewallConfig, SandboxMount
 
 logger = logging.getLogger(__name__)
@@ -41,14 +43,15 @@ class SandboxManager:
     def __init__(
         self,
         backend_type: str = "auto",
-        db_path: str = "drex_firewall.db",
+        db_path: Optional[str] = None,
         repository: Optional[ActionRepository] = None,
     ):
         self.backend_type = backend_type
-        self.db_path = db_path
-        self.repository = repository or ActionRepository(db_path=db_path)
+        self.db_path = private_database_path(repository.db_path if repository else db_path)
+        self.repository = repository or ActionRepository(db_path=self.db_path)
         self.backend: IsolationBackend = get_isolation_backend(backend_type)
         self._mcp_config_paths: Dict[str, str] = {}
+        self._audit_brokers: Dict[str, AuditBroker] = {}
 
     def create_session(
         self,
@@ -74,13 +77,36 @@ class SandboxManager:
         net_mode = network_mode or cfg.sandbox.network_mode
         lims = limits or cfg.sandbox.limits
 
+        if self.repository.get_sandbox_session(sid):
+            raise ValueError("Sandbox session identity already exists; refusing history replacement")
+        code_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+        runtime_mounts = python_dependency_mounts() if self.backend.name == "bubblewrap" else []
+        validate_audit_mounts(self.db_path, abs_workspace, [*cfg.sandbox.extra_mounts, *runtime_mounts], code_root)
+        if self.backend.name == "none":
+            raise RuntimeError(
+                "FAIL-CLOSED: NoIsolation cannot protect host audit history from same-UID native execution; "
+                "audited sessions require an isolation backend"
+            )
+        broker = AuditBroker(self.repository, sid, f"{agent_type}-sandboxed")
+        self._audit_brokers[sid] = broker
+        try:
+            validate_audit_mounts(broker.socket_path, abs_workspace, cfg.sandbox.extra_mounts, code_root)
+        except Exception:
+            self._remove_audit_broker(sid)
+            raise
+
         if net_mode == "controlled-online" and self.backend.name != "bubblewrap":
+            self._remove_audit_broker(sid)
             raise RuntimeError(
                 "FAIL-CLOSED: controlled-online networking is implemented only by the Bubblewrap backend"
             )
 
         # Keep the generated MCP configuration outside agent-writable paths.
-        mcp_cfg_path = self._generate_mcp_config(abs_workspace, policy_pack, sid, agent_type)
+        try:
+            mcp_cfg_path = self._generate_mcp_config(abs_workspace, policy_pack, sid, agent_type)
+        except Exception:
+            self._remove_audit_broker(sid)
+            raise
         self._mcp_config_paths[sid] = mcp_cfg_path
 
         spec = SandboxSpec(
@@ -97,11 +123,13 @@ class SandboxManager:
             env_overrides=env_overrides or {},
             extra_mounts=[
                 *cfg.sandbox.extra_mounts,
+                *runtime_mounts,
                 SandboxMount(
                     host_path=mcp_cfg_path,
                     container_path="/tmp/.drex_mcp_config.json",
                     mode="ro",
                 ),
+                SandboxMount(host_path=broker.socket_path, container_path=GUEST_SOCKET, mode="ro"),
             ],
         )
 
@@ -131,6 +159,8 @@ class SandboxManager:
             return info
 
         except Exception as e:
+            self.backend.destroy(sid)
+            self._remove_audit_broker(sid)
             self._remove_mcp_config(sid)
             # Record failure in repository (fail-closed)
             self.repository.record_sandbox_session(
@@ -168,10 +198,9 @@ class SandboxManager:
                         session_id,
                         "--agent-id",
                         f"{agent_type}-sandboxed",
+                        "--host-audit",
                     ],
-                    "env": {
-                        "DREX_DATABASE_PATH": "/workspace/.drex_firewall.db",
-                    },
+                    "env": {},
                 }
             }
         }
@@ -211,6 +240,11 @@ class SandboxManager:
                 os.rmdir(os.path.dirname(path))
             except OSError:
                 pass
+
+    def _remove_audit_broker(self, session_id: str) -> None:
+        broker = self._audit_brokers.pop(session_id, None)
+        if broker:
+            broker.close()
 
     def run_agent(
         self,
@@ -346,6 +380,9 @@ class SandboxManager:
         """Clean up ephemeral mount points and sandbox resources."""
         ok = self.backend.destroy(session_id)
         if ok:
-            self.repository.update_sandbox_session(session_id=session_id, status="DESTROYED")
-            self._remove_mcp_config(session_id)
+            try:
+                self.repository.update_sandbox_session(session_id=session_id, status="DESTROYED")
+            finally:
+                self._remove_mcp_config(session_id)
+                self._remove_audit_broker(session_id)
         return ok

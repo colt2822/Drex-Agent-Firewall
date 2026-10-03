@@ -1,0 +1,66 @@
+{
+  "host_writer": {
+    "uid": 1000,
+    "process": "host SandboxManager Python process, per-session serial writer thread",
+    "pid_during_fixture": 3691522
+  },
+  "before": {
+    "db": {
+      "path": "/tmp/drex-rt03-boundary-ylyuelhl/workspace/.drex_firewall.db",
+      "uid": 1000,
+      "mode": "0o644"
+    },
+    "parent": {
+      "path": "/tmp/drex-rt03-boundary-ylyuelhl/workspace",
+      "uid": 1000,
+      "mode": "0o775"
+    },
+    "wal": {
+      "path": "/tmp/drex-rt03-boundary-ylyuelhl/workspace/.drex_firewall.db-wal",
+      "uid": 1000,
+      "mode": "0o644"
+    },
+    "shm": {
+      "path": "/tmp/drex-rt03-boundary-ylyuelhl/workspace/.drex_firewall.db-shm",
+      "uid": 1000,
+      "mode": "0o644"
+    }
+  },
+  "after": {
+    "db": {
+      "path": "/tmp/drex-rt03-boundary-ylyuelhl/private/history.db",
+      "uid": 1000,
+      "mode": "0o600"
+    },
+    "parent": {
+      "path": "/tmp/drex-rt03-boundary-ylyuelhl/private",
+      "uid": 1000,
+      "mode": "0o700"
+    },
+    "wal": {
+      "path": "/tmp/drex-rt03-boundary-ylyuelhl/private/history.db-wal",
+      "uid": 1000,
+      "mode": "0o600"
+    },
+    "shm": {
+      "path": "/tmp/drex-rt03-boundary-ylyuelhl/private/history.db-shm",
+      "uid": 1000,
+      "mode": "0o600"
+    },
+    "socket": {
+      "path": "/tmp/drex-audit-ipc-gqxgdjri/writer.sock",
+      "uid": 1000,
+      "mode": "0o600"
+    },
+    "native_guest": {
+      "uid": 1000,
+      "db_visible": false,
+      "wal_visible": false,
+      "shm_visible": false,
+      "db_writable": false,
+      "parent_visible": false
+    },
+    "sqlite_synchronous": 2,
+    "history_survives_destroy": true
+  }
+}

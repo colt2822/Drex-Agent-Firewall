@@ -1,8 +1,6 @@
 """Stdio MCP server exposing Drex Agent Firewall guarded tools to autonomous agents.
 
-Allows Claude Code, Codex, or OpenHands to run in a workspace where all shell,
-filesystem, and git operations are intercepted, evaluated by Drex and deterministic
-policies, enforced, and traced in SQLite.
+Mediates calls made to these MCP tools. Native agent execution can bypass policy.
 """
 
 from __future__ import annotations
@@ -17,6 +15,7 @@ from drex_agent_firewall.adapters.filesystem_adapter import FilesystemAdapter
 from drex_agent_firewall.adapters.git_adapter import GitAdapter
 from drex_agent_firewall.adapters.shell_adapter import ShellAdapter
 from drex_agent_firewall.persistence.repository import ActionRepository
+from drex_agent_firewall.persistence.audit_broker import AuditClient
 from drex_agent_firewall.policy.engine import DeterministicPolicyEngine
 from drex_agent_firewall.policy.packs import POLICY_PACK_DESCRIPTIONS
 from drex_agent_firewall.schemas.config import FirewallConfig
@@ -31,6 +30,7 @@ class DrexMcpServer:
         config: Optional[FirewallConfig] = None,
         agent_id: str = "claude-code",
         session_id: str = "mcp-session",
+        host_audit: bool = False,
     ):
         self.workspace_dir = os.path.abspath(workspace_dir)
         self.config = config or FirewallConfig(allowed_roots=[self.workspace_dir])
@@ -38,7 +38,7 @@ class DrexMcpServer:
         self.session_id = session_id
 
         self.engine = DeterministicPolicyEngine(config=self.config)
-        self.repository = ActionRepository(db_path=self.config.database_path)
+        self.repository = AuditClient() if host_audit else ActionRepository(db_path=self.config.database_path)
 
         # Initialize adapters
         self.shell_adapter = ShellAdapter(engine=self.engine, repository=self.repository)
@@ -315,6 +315,7 @@ def main() -> None:
     parser.add_argument("--agent-id", default="claude-code", help="Agent identifier")
     parser.add_argument("--session-id", default="real-agent-demo", help="Session ID")
     parser.add_argument("--live-drex", action="store_true", help="Enable live Drex API provider")
+    parser.add_argument("--host-audit", action="store_true", help="Require the fixed host audit socket; never open a guest DB")
     args = parser.parse_args()
 
     config = FirewallConfig.from_pack(args.policy)
@@ -337,6 +338,7 @@ def main() -> None:
         config=config,
         agent_id=args.agent_id,
         session_id=args.session_id,
+        host_audit=args.host_audit,
     )
     server.run_stdio()
 

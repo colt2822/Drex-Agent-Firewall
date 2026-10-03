@@ -1,0 +1,200 @@
+[
+  {
+    "attack": "unlink",
+    "precondition": "native process shares writer UID and writable workspace; SQLite connection initially open",
+    "native_returncode": 0,
+    "audit_history_changed": true,
+    "detected": false,
+    "live_error": null,
+    "reopen_error": null,
+    "action_fails_closed": "see adapter persistence-error regression; native execution unmediated",
+    "security_impact": "history lost/forged"
+  },
+  {
+    "attack": "zero_truncate",
+    "precondition": "native process shares writer UID and writable workspace; SQLite connection initially open",
+    "native_returncode": 0,
+    "audit_history_changed": false,
+    "detected": false,
+    "live_error": null,
+    "reopen_error": null,
+    "action_fails_closed": "see adapter persistence-error regression; native execution unmediated",
+    "security_impact": "sidecar/path tamper possible; committed fixture survived"
+  },
+  {
+    "attack": "partial_truncate",
+    "precondition": "native process shares writer UID and writable workspace; SQLite connection initially open",
+    "native_returncode": 0,
+    "audit_history_changed": false,
+    "detected": false,
+    "live_error": null,
+    "reopen_error": null,
+    "action_fails_closed": "see adapter persistence-error regression; native execution unmediated",
+    "security_impact": "sidecar/path tamper possible; committed fixture survived"
+  },
+  {
+    "attack": "unlink_recreate",
+    "precondition": "native process shares writer UID and writable workspace; SQLite connection initially open",
+    "native_returncode": 0,
+    "audit_history_changed": true,
+    "detected": false,
+    "live_error": null,
+    "reopen_error": null,
+    "action_fails_closed": "see adapter persistence-error regression; native execution unmediated",
+    "security_impact": "history lost/forged"
+  },
+  {
+    "attack": "rename_empty",
+    "precondition": "native process shares writer UID and writable workspace; SQLite connection initially open",
+    "native_returncode": 0,
+    "audit_history_changed": true,
+    "detected": false,
+    "live_error": null,
+    "reopen_error": null,
+    "action_fails_closed": "see adapter persistence-error regression; native execution unmediated",
+    "security_impact": "history lost/forged"
+  },
+  {
+    "attack": "valid_empty",
+    "precondition": "native process shares writer UID and writable workspace; SQLite connection initially open",
+    "native_returncode": 0,
+    "audit_history_changed": false,
+    "detected": false,
+    "live_error": null,
+    "reopen_error": null,
+    "action_fails_closed": "see adapter persistence-error regression; native execution unmediated",
+    "security_impact": "sidecar/path tamper possible; committed fixture survived"
+  },
+  {
+    "attack": "rollback",
+    "precondition": "native process shares writer UID and writable workspace; SQLite connection initially open",
+    "native_returncode": 0,
+    "audit_history_changed": false,
+    "detected": false,
+    "live_error": null,
+    "reopen_error": null,
+    "action_fails_closed": "see adapter persistence-error regression; native execution unmediated",
+    "security_impact": "sidecar/path tamper possible; committed fixture survived"
+  },
+  {
+    "attack": "delete_rows",
+    "precondition": "native process shares writer UID and writable workspace; SQLite connection initially open",
+    "native_returncode": 0,
+    "audit_history_changed": true,
+    "detected": false,
+    "live_error": null,
+    "reopen_error": null,
+    "action_fails_closed": "see adapter persistence-error regression; native execution unmediated",
+    "security_impact": "history lost/forged"
+  },
+  {
+    "attack": "update_rows",
+    "precondition": "native process shares writer UID and writable workspace; SQLite connection initially open",
+    "native_returncode": 0,
+    "audit_history_changed": true,
+    "detected": false,
+    "live_error": null,
+    "reopen_error": null,
+    "action_fails_closed": "see adapter persistence-error regression; native execution unmediated",
+    "security_impact": "history lost/forged"
+  },
+  {
+    "attack": "delete_block",
+    "precondition": "native process shares writer UID and writable workspace; SQLite connection initially open",
+    "native_returncode": 0,
+    "audit_history_changed": true,
+    "detected": false,
+    "live_error": null,
+    "reopen_error": null,
+    "action_fails_closed": "see adapter persistence-error regression; native execution unmediated",
+    "security_impact": "history lost/forged"
+  },
+  {
+    "attack": "wal_delete",
+    "precondition": "native process shares writer UID and writable workspace; SQLite connection initially open",
+    "native_returncode": 0,
+    "audit_history_changed": false,
+    "detected": false,
+    "live_error": null,
+    "reopen_error": null,
+    "action_fails_closed": "see adapter persistence-error regression; native execution unmediated",
+    "security_impact": "sidecar/path tamper possible; committed fixture survived"
+  },
+  {
+    "attack": "wal_truncate",
+    "precondition": "native process shares writer UID and writable workspace; SQLite connection initially open",
+    "native_returncode": 0,
+    "audit_history_changed": true,
+    "detected": true,
+    "live_error": null,
+    "reopen_error": "DatabaseError",
+    "action_fails_closed": "see adapter persistence-error regression; native execution unmediated",
+    "security_impact": "history lost/forged"
+  },
+  {
+    "attack": "wal_replace",
+    "precondition": "native process shares writer UID and writable workspace; SQLite connection initially open",
+    "native_returncode": 0,
+    "audit_history_changed": false,
+    "detected": false,
+    "live_error": null,
+    "reopen_error": null,
+    "action_fails_closed": "see adapter persistence-error regression; native execution unmediated",
+    "security_impact": "sidecar/path tamper possible; committed fixture survived"
+  },
+  {
+    "attack": "shm_remove",
+    "precondition": "native process shares writer UID and writable workspace; SQLite connection initially open",
+    "native_returncode": 0,
+    "audit_history_changed": false,
+    "detected": false,
+    "live_error": null,
+    "reopen_error": null,
+    "action_fails_closed": "see adapter persistence-error regression; native execution unmediated",
+    "security_impact": "sidecar/path tamper possible; committed fixture survived"
+  },
+  {
+    "attack": "db_symlink",
+    "precondition": "native process shares writer UID and writable workspace; SQLite connection initially open",
+    "native_returncode": 0,
+    "audit_history_changed": true,
+    "detected": false,
+    "live_error": null,
+    "reopen_error": null,
+    "action_fails_closed": "see adapter persistence-error regression; native execution unmediated",
+    "security_impact": "history lost/forged"
+  },
+  {
+    "attack": "parent_symlink",
+    "precondition": "native process shares writer UID and writable workspace; SQLite connection initially open",
+    "native_returncode": 0,
+    "audit_history_changed": true,
+    "detected": false,
+    "live_error": null,
+    "reopen_error": null,
+    "action_fails_closed": "see adapter persistence-error regression; native execution unmediated",
+    "security_impact": "history lost/forged"
+  },
+  {
+    "attack": "directory_replace",
+    "precondition": "native process shares writer UID and writable workspace; SQLite connection initially open",
+    "native_returncode": 0,
+    "audit_history_changed": true,
+    "detected": true,
+    "live_error": null,
+    "reopen_error": "OperationalError",
+    "action_fails_closed": "see adapter persistence-error regression; native execution unmediated",
+    "security_impact": "history lost/forged"
+  },
+  {
+    "attack": "inode_replace",
+    "precondition": "native process shares writer UID and writable workspace; SQLite connection initially open",
+    "native_returncode": 0,
+    "audit_history_changed": false,
+    "detected": false,
+    "live_error": null,
+    "reopen_error": null,
+    "action_fails_closed": "see adapter persistence-error regression; native execution unmediated",
+    "security_impact": "sidecar/path tamper possible; committed fixture survived"
+  }
+]

@@ -5,6 +5,15 @@ All notable changes to the Drex Agent Firewall project will be documented in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Security candidate — RT-03
+- Keep managed audit DB/WAL/SHM in a host-owned private directory outside guest mounts; bind only a per-session Unix socket. Reject store/mount overlap, symlink destinations, session-ID reuse, and audited NoIsolation execution.
+- Limit IPC to decision and single execution-result appends with immutable snapshots, fixed host-bound session correlation, bounded frames, synchronous acknowledgements, and a 16 MiB session payload budget. Preserve the compatible reporting projection and retained history after teardown.
+- Use SQLite synchronous FULL; repair the missing fail-closed decision enum import. Mount only the specific Python dependencies needed for Bubblewrap MCP, read-only, without exposing host package/home parents.
+- Add disposable native tamper evidence: 26 filesystem variants blocked by tested Bubblewrap; 115 project tests passed. Replay measurements remain 105/100%, 220/99.55%, 186/98.39%, and 100/98%, with zero observed high-impact false allows.
+- Keep global FWA-U3 unresolved: no OCI runtime proof, no credential-free real-agent canary, and no independent host-owner rollback detection. Standalone same-UID execution remains tamperable. FWA-U1/U2 remain unresolved.
+
 ## [0.1.1] - 2026-10-02
 
 ### Security

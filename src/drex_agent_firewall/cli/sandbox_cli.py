@@ -127,9 +127,10 @@ def sandbox_test_escape_cmd(workspace: str, policy: str, backend: str):
 
 @sandbox_group.command("list")
 @click.option("--limit", "-n", default=20, help="Max records to display")
-def sandbox_list_cmd(limit: int):
+@click.option("--audit-db", default=None, help="Trusted host audit database to inspect")
+def sandbox_list_cmd(limit: int, audit_db: Optional[str]):
     """List recent and active sandbox sessions."""
-    mgr = SandboxManager()
+    mgr = SandboxManager(db_path=audit_db)
     sessions = mgr.repository.list_sandbox_sessions(limit=limit)
 
     table = Table(title="Drex Isolated Sandbox Sessions", show_header=True)
@@ -157,9 +158,10 @@ def sandbox_list_cmd(limit: int):
 
 @sandbox_group.command("inspect")
 @click.argument("session_id")
-def sandbox_inspect_cmd(session_id: str):
+@click.option("--audit-db", default=None, help="Trusted host audit database to inspect")
+def sandbox_inspect_cmd(session_id: str, audit_db: Optional[str]):
     """Inspect full diagnostic record of a sandbox session."""
-    mgr = SandboxManager()
+    mgr = SandboxManager(db_path=audit_db)
     sess = mgr.repository.get_sandbox_session(session_id)
     if not sess:
         console.print(f"[bold red]Session '{session_id}' not found.[/bold red]")

@@ -8,7 +8,7 @@ from drex_agent_firewall.constraints.enforcer import ConstraintEnforcer, Constra
 from drex_agent_firewall.normalizers.context_normalizer import ContextNormalizer
 from drex_agent_firewall.persistence.repository import ActionRepository
 from drex_agent_firewall.policy.engine import DeterministicPolicyEngine
-from drex_agent_firewall.schemas.decision import FirewallDecision
+from drex_agent_firewall.schemas.decision import FirewallDecision, FinalDecision
 from drex_agent_firewall.schemas.envelope import ActionEnvelope
 from drex_agent_firewall.telemetry.metrics import (
     EXECUTION_FAILURES,

@@ -231,10 +231,24 @@ HOST ENVIRONMENT
 - Bubblewrap **shares the host Linux kernel**. It is not a microVM, hypervisor, or formal verification boundary.
 - **No cgroup-based resource limits** are enforced by Bubblewrap alone. Timeout enforcement and output truncation provide partial mitigation.
 - The MCP policy layer is not mandatory mediation. Agents with native shell or filesystem access can perform workspace actions without calling the MCP server; the outer sandbox limits some host access but does not make every effect policy checked.
-- The MCP audit SQLite file is currently created in the writable workspace. A sandboxed agent that can reach that file may modify or remove its records. Treat these records as diagnostic, not tamper-proof evidence.
+- Managed sessions now use a host-private SQLite store and per-session append-only Unix-socket capability. Real Bubblewrap native attacks could not read, delete, replace, edit, or redirect that store. Standalone MCP/SDK databases remain caller-selected and can be tampered with by same-UID host execution. Global FWA-U3 remains unresolved pending backend validation; see [RT-03 evidence and limits](security/rt03/REPORT.md).
 - Resource controls vary by backend. Bubblewrap does not enforce CPU, memory, or file-descriptor quotas; configured command timeouts, output limits, and namespace boundaries do not prevent every resource exhaustion attack.
 - Disk and file-descriptor quotas are not enforced consistently across backends, and command timeouts are not a whole-session wall-clock limit. Container backends apply their configured CPU, memory, and PID limits; those limits are not portable to every backend.
 - The runtime is defense-in-depth and is not a complete authoritative security boundary. Do not rely on it as the sole enforcement or audit control for high-impact actions.
+
+Managed audit history defaults to the trusted launcher's
+`~/.local/state/drex-agent-firewall/audit/history.db`, with a 0700 parent and 0600
+database. The DB and its WAL/SHM are never guest mounts. MCP gets only
+`/run/drex-audit.sock`; changing guest environment, workspace configuration, or
+MCP arguments cannot change that writer's destination. `SandboxManager` refuses
+NoIsolation sessions. Raw NoIsolation and standalone host execution remain unsafe.
+History persists after session destruction. Host inspection supports
+`drex-firewall sandbox inspect SESSION --audit-db /trusted/private/history.db`;
+the existing API/CLI can inspect the DB when configured by the trusted operator.
+Existing workspace databases are not silently migrated. This candidate passed
+115 tests and 26 native filesystem tamper cases in real Bubblewrap namespaces;
+there is no independent cryptographic rollback detection or complete native-action
+audit coverage. Docker/Podman and a real-agent canary were not validated here.
 - The legacy `allowlisted` network mode remains fully isolated. Use `controlled-online` only for supported authenticated agent calls; Codex currently permits `api.openai.com`, `auth.openai.com`, and `chatgpt.com`, while Claude permits `api.anthropic.com`.
 - The broker accepts CONNECT requests only for exact configured hostname strings on TCP/443 and validates each resolved destination as globally routable. It does not inspect TLS SNI, HTTPS URL paths, or encrypted request contents.
 - Codex's inner workspace sandbox may be disabled for its CLI child when nested Bubblewrap cannot create a namespace. In that mode, the enclosing Drex Bubblewrap remains the filesystem, process, and network enforcement boundary.

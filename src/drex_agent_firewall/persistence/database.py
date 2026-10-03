@@ -8,6 +8,15 @@ from typing import Optional
 
 
 SCHEMA_SQL = """
+CREATE TABLE IF NOT EXISTS audit_events (
+    sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    action_id TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK(kind IN ('decision','execution')),
+    payload TEXT NOT NULL,
+    UNIQUE(action_id, kind)
+);
+CREATE INDEX IF NOT EXISTS idx_events_session ON audit_events(session_id);
 CREATE TABLE IF NOT EXISTS audit_actions (
     action_id TEXT PRIMARY KEY,
     trace_id TEXT NOT NULL,
@@ -76,7 +85,7 @@ def init_db(db_path: str = "drex_firewall.db") -> sqlite3.Connection:
     """Initialize SQLite database with WAL mode and create tables if needed."""
     conn = sqlite3.connect(db_path, timeout=30.0, check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA synchronous=NORMAL;")
+    conn.execute("PRAGMA synchronous=FULL;")
     conn.execute("PRAGMA busy_timeout=5000;")
     conn.executescript(SCHEMA_SQL)
 

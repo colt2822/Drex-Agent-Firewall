@@ -298,7 +298,7 @@ class BubblewrapBackend(IsolationBackend):
             "LANG": "C.UTF-8",
             "LC_ALL": "C.UTF-8",
             "TERM": "xterm-256color",
-            "PYTHONPATH": "/opt/drex-firewall/src",
+            "PYTHONPATH": "/opt/drex-firewall/src:/opt/drex-python",
         }
 
         if spec.network_mode == "controlled-online":

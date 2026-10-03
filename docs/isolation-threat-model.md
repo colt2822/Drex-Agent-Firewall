@@ -31,9 +31,12 @@ The isolated agent runtime provides an **outer operating system confinement laye
 ## 2.1 Known Limitations
 
 - Native agent shell and filesystem actions can bypass MCP policy evaluation. The outer sandbox constrains some host access but does not provide mandatory mediation (FWA-U2).
-- The MCP audit SQLite database currently resides in the agent-writable workspace. An agent may alter or remove these records; they are not tamper-proof (FWA-U3).
+- Managed sessions now use a host-private store and a fixed per-session append capability. Tested Bubblewrap native processes could not access DB/WAL/SHM or their replacement directory. Global FWA-U3 stays unresolved pending backend/runtime validation. Standalone same-UID host stores remain tamperable; no independent host-owner rollback detection is implemented. See [RT-03 report](../security/rt03/REPORT.md).
 - Bubblewrap shares the host kernel and does not enforce cgroup resource quotas. No sandbox backend is claimed to provide complete isolation.
 - Treat the inner firewall and its audit records as defense-in-depth. Use independent controls for authorization and durable audit evidence.
+- SandboxManager refuses NoIsolation for audited execution. Direct use of the raw development backend is still unrestricted and cannot protect owner-writable files from a same-UID process.
+- Docker/Podman receive the socket mount with host UID mapping, but their runtime, image dependencies, and IPC accessibility were not validated here. MicroVM is a stub. Do not infer coverage from argument-generation tests.
+- A guest can submit false new events or skip mediation; append capability is not proof that an event is truthful or that native actions were logged. It cannot edit committed event snapshots through the supported IPC operations.
 
 ---
 

@@ -44,21 +44,17 @@ def test_session_mounts_private_mcp_config_read_only(tmp_path):
         def launch(self, _spec):
             return SimpleNamespace(status=SandboxStatus.RUNNING)
 
-    class _CaptureRepository:
-        def record_sandbox_session(self, **_kwargs):
-            pass
-
-    manager = SandboxManager.__new__(SandboxManager)
+    private = tmp_path / "private"
+    private.mkdir(mode=0o700)
+    manager = SandboxManager(backend_type="none", db_path=str(private / "audit.db"))
     manager.backend = _CaptureSessionBackend()
-    manager.repository = _CaptureRepository()
-    manager.db_path = str(tmp_path / "audit.db")
-    manager._mcp_config_paths = {}
     manager.create_session(str(workspace), session_id="mcp-mount-canary")
 
     mount = next(m for m in manager.backend.spec.extra_mounts if m.container_path == "/tmp/.drex_mcp_config.json")
     assert mount.mode == "ro"
     assert not mount.host_path.startswith(str(workspace) + "/")
     manager._remove_mcp_config("mcp-mount-canary")
+    manager._remove_audit_broker("mcp-mount-canary")
 
 
 class _CaptureBackend:
