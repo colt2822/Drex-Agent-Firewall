@@ -1,16 +1,47 @@
 # Drex Agent Firewall
 
-> A probabilistic policy firewall for autonomous AI agents, powered by Drex.
+> Deterministic policy and execution control for coding agents, powered by Drex.
 
 [![CI](https://github.com/colt2822/Drex-Agent-Firewall/actions/workflows/ci.yml/badge.svg)](https://github.com/colt2822/Drex-Agent-Firewall/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 
-**Drex Agent Firewall** is an open-source, vendor-neutral policy and decision firewall designed to sit between autonomous AI agents (Claude Code, OpenAI Codex, OpenHands, generic MCP clients, custom agentic loops) and tools that can cause side effects (shell, filesystem, Git, GitHub, HTTP, MCP).
+**Drex Agent Firewall** is a deterministic policy and execution-control layer for coding agents. It evaluates proposed actions, applies deterministic rules and constraints, and offers guarded adapters and optional outer sandboxing. Coverage depends on how an agent is integrated.
 
 > **Notice**: Independent open-source project. Not an official Nace/Drex SDK or certified security appliance. It does not provide formal security certification or mathematical proofs of non-interference. It should be deployed as defense-in-depth alongside containerization, least privilege IAM, and network sandboxing.
 
 ---
+
+## What it is and what it is not
+
+Drex combines a probabilistic decision layer with deterministic policy rules and execution controls for actions routed through its integrations. It can be used through MCP, SDK calls, guarded adapters, and an optional outer sandbox.
+
+It is not a VM or hardware isolation boundary, complete mandatory mediation today, complete resource isolation, or globally tamper-proof audit infrastructure. Agents with native shell/filesystem access can bypass MCP policy calls; the sandbox is an independent defense layer with backend-specific limits.
+
+## Current hardening status
+
+| Area | Status |
+|---|---|
+| Managed Bubblewrap audit isolation | **Demonstrated** within the tested managed Bubblewrap scope |
+| OCI audit isolation | **Pending runtime validation**; configuration tests alone do not demonstrate containment |
+| RT-02 mandatory mediation | **Unresolved** |
+| Aggregate resource isolation (RT-01) | **Unresolved** |
+| Host rollback detection | **Not implemented** |
+| Global RT-03 | **Unresolved** |
+
+Managed Bubblewrap agents could not directly access the authoritative audit DB/WAL/SHM in 26 synthetic tamper cases. Global audit tamperability remains possible through raw NoIsolation or same-UID host access. See [RT-03 patch notes](RELEASE_NOTES_v0.1.2.md), the [security report](security/rt03/REPORT.md), and the [roadmap](docs/ROADMAP.md).
+
+## Security model
+
+The controls have distinct roles:
+
+- **DREX_DECISION_LAYER**: probabilistic action classification; its output is advisory input to policy.
+- **DETERMINISTIC_POLICY_LAYER**: rules and invariants decide whether a proposed action is permitted or escalated.
+- **MCP_MEDIATION**: intercepts calls routed through the MCP server; native agent operations may bypass it.
+- **GUARDED_ADAPTERS**: apply policy and constraints to actions executed through those adapters.
+- **OUTER_SANDBOX**: limits process visibility and access according to the selected backend; it does not make all actions policy-mediated.
+- **CONTROLLED_EGRESS**: optional brokered network path with documented destination and protocol limits.
+- **AUDIT_STORE**: managed sessions use a host-private DB and narrow per-session append socket; this is scoped prevention, not globally tamper-proof history.
 
 ## Architecture
 
@@ -20,15 +51,15 @@ AI Agent (Claude Code / OpenHands / Custom)
 Drex Agent Firewall
    ├── 1. Context Normalizer & Secret Redactor
    ├── 2. Deterministic Pre-Check (Absolute Invariants)
-   ├── 3. Drex Decision Engine (Full Probability Distributions)
-   ├── 4. Deterministic Policy Interpretation (Confidence Thresholds)
+   ├── 3. Drex Decision Layer (Full Probability Distributions)
+   ├── 4. Deterministic Policy Layer
    └── 5. Machine-Enforceable Constraint Synthesis
    ↓
 ALLOW | ALLOW_WITH_CONSTRAINTS | ESCALATE | ABSTAIN | BLOCK
    ↓
 Enforcement Adapters (Shell / Filesystem / Git / GitHub / HTTP / MCP)
    ↓
-Audit Trace & WAL SQLite Persistence
+Managed Audit Store (host writer for supported managed sessions)
 ```
 
 ---
@@ -231,7 +262,7 @@ HOST ENVIRONMENT
 - Bubblewrap **shares the host Linux kernel**. It is not a microVM, hypervisor, or formal verification boundary.
 - **No cgroup-based resource limits** are enforced by Bubblewrap alone. Timeout enforcement and output truncation provide partial mitigation.
 - The MCP policy layer is not mandatory mediation. Agents with native shell or filesystem access can perform workspace actions without calling the MCP server; the outer sandbox limits some host access but does not make every effect policy checked.
-- Managed sessions now use a host-private SQLite store and per-session append-only Unix-socket capability. Real Bubblewrap native attacks could not read, delete, replace, edit, or redirect that store. Standalone MCP/SDK databases remain caller-selected and can be tampered with by same-UID host execution. Global FWA-U3 remains unresolved pending backend validation; see [RT-03 evidence and limits](security/rt03/REPORT.md).
+- Managed sessions use a host-private SQLite store and a per-session append-oriented Unix-socket capability. In tested managed Bubblewrap sessions, native attacks could not read, write, delete, or replace the authoritative store. OCI runtime behavior remains unvalidated. Standalone MCP/SDK databases remain caller-selected and can be tampered with by same-UID host execution. Global RT-03 remains unresolved; see [RT-03 evidence and limits](security/rt03/REPORT.md).
 - Resource controls vary by backend. Bubblewrap does not enforce CPU, memory, or file-descriptor quotas; configured command timeouts, output limits, and namespace boundaries do not prevent every resource exhaustion attack.
 - Disk and file-descriptor quotas are not enforced consistently across backends, and command timeouts are not a whole-session wall-clock limit. Container backends apply their configured CPU, memory, and PID limits; those limits are not portable to every backend.
 - The runtime is defense-in-depth and is not a complete authoritative security boundary. Do not rely on it as the sole enforcement or audit control for high-impact actions.
@@ -245,8 +276,8 @@ NoIsolation sessions. Raw NoIsolation and standalone host execution remain unsaf
 History persists after session destruction. Host inspection supports
 `drex-firewall sandbox inspect SESSION --audit-db /trusted/private/history.db`;
 the existing API/CLI can inspect the DB when configured by the trusted operator.
-Existing workspace databases are not silently migrated. This candidate passed
-115 tests and 26 native filesystem tamper cases in real Bubblewrap namespaces;
+Existing workspace databases are not silently migrated. The v0.1.2 candidate
+passed 120 tests; 26 native filesystem tamper cases ran in real Bubblewrap namespaces;
 there is no independent cryptographic rollback detection or complete native-action
 audit coverage. Docker/Podman and a real-agent canary were not validated here.
 - The legacy `allowlisted` network mode remains fully isolated. Use `controlled-online` only for supported authenticated agent calls; Codex currently permits `api.openai.com`, `auth.openai.com`, and `chatgpt.com`, while Claude permits `api.anthropic.com`.

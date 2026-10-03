@@ -7,7 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Security candidate — RT-03
+## [0.1.2] - 2026-10-02
+
+### Security
+- Keep managed authoritative audit history in a host-private SQLite store behind a trusted host-side writer. Managed Bubblewrap sessions receive a per-session append socket, not the database or its WAL/SHM files.
+- Fail closed when protected decision persistence fails; constrain IPC to bounded append requests with session-bound identity and deadlines.
+- Demonstrate prevention of direct audit DB/WAL/SHM access in the tested managed Bubblewrap scope. Global RT-03 remains unresolved; OCI runtime behavior has not been validated.
+- Add OCI generated-configuration regressions. These check mounts, socket configuration, and fail-closed backend selection without claiming runtime containment.
+
+### Documentation
+- Clarify current RT-01, RT-02, and RT-03 status, the managed Bubblewrap scope, and remaining trust-boundary limitations.
+- Add [RT-03 patch notes](RELEASE_NOTES_v0.1.2.md) and a [public roadmap](docs/ROADMAP.md).
+
+### Implementation details
 - Keep managed audit DB/WAL/SHM in a host-owned private directory outside guest mounts; bind only a per-session Unix socket. Reject store/mount overlap, symlink destinations, session-ID reuse, and audited NoIsolation execution.
 - Limit IPC to decision and single execution-result appends with immutable snapshots, fixed host-bound session correlation, bounded frames, synchronous acknowledgements, and a 16 MiB session payload budget. Preserve the compatible reporting projection and retained history after teardown.
 - Use SQLite synchronous FULL; repair the missing fail-closed decision enum import. Mount only the specific Python dependencies needed for Bubblewrap MCP, read-only, without exposing host package/home parents.

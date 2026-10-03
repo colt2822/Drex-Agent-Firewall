@@ -2,7 +2,7 @@
 
 ## 1. Architecture Overview
 
-A critical requirement of credible agent security is proving the firewall under a **real autonomous coding agent** solving an actual coding task in a real repository.
+This historical integration example records one **real autonomous coding agent** solving an actual coding task. It demonstrates the MCP integration path used in that run; it does not prove that all agent actions are mediated or establish the RT-03 audit-store boundary.
 
 ```
 REAL AUTONOMOUS CODING AGENT (Claude Code / OpenAI Codex)
@@ -20,7 +20,7 @@ REAL AUTONOMOUS CODING AGENT (Claude Code / OpenAI Codex)
           SQLite WAL Audit Logging & Outcome Verification
 ```
 
-The agent is never given unrestricted execution authority. Every shell command, file read, file modification, and git operation passes through the firewall before execution.
+In the recorded run, the displayed actions were routed through the MCP firewall. Native shell or filesystem capabilities can perform actions outside MCP mediation, so the statement does not apply to every agent integration or action.
 
 ---
 

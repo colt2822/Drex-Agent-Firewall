@@ -1,22 +1,27 @@
 # RT-03 local fix candidate — 2026-10-02
 
-The candidate prevents the tested native Bubblewrap process from reaching or
+The v0.1.2 candidate prevents the tested native Bubblewrap process from reaching or
 altering committed managed audit history. Global RT-03 remains unresolved:
 Docker/Podman were unavailable, microVM is a stub, and no real-agent canary could
 be run without real credentials. Standalone same-UID host execution still has no
-independent tamper boundary. This is a local review candidate, not a release or
-deployment approval.
+independent tamper boundary. This scoped source update does not establish global
+closure or deployment approval.
 
 ```text
 PROJECT=Drex Agent Firewall RT-03 Audit-Store Isolation
 BASE_HEAD=7d06afa873e4c372294879672881a9d4124cc33d
-FINAL_HEAD=the local commit containing this report; retrieve with git rev-parse HEAD
+FINAL_HEAD=retrieve the validated source commit with git rev-parse HEAD
 WORKTREE=/home/colton-mcclain/drex-worktrees/firewall-rt03-audit-store-20261002
 BRANCH=security/rt03-audit-store-isolation-20261002
 GIT_STATUS=verified after local commit in final response
 
 RT03_BEFORE=CONFIRMED_UNRESOLVED; native workspace tamper and silent rollback reproduced
 RT03_AFTER=BUBBLEWRAP_PREVENTION_DEMONSTRATED; GLOBAL_CLOSURE_UNPROVEN
+MANAGED_BUBBLEWRAP_RT03=PREVENTION_DEMONSTRATED
+MANAGED_OCI_RT03=UNVALIDATED
+RT01_RESOURCE_ISOLATION=UNRESOLVED
+RT02_MANDATORY_MEDIATION=UNRESOLVED
+RT03_GLOBAL=UNRESOLVED
 AUDIT_DB_TAMPERABLE=YES (standalone/unrestricted host execution); NO within tested managed Bubblewrap boundary
 AUDIT_TAMPER_DETECTABLE=NO independent tamper/rollback detection
 RT03_STATUS=UNRESOLVED
@@ -40,8 +45,8 @@ RT03_FIX_DEPENDS_ON_MCP_MEDIATION=NO
 RT02_STATUS=UNRESOLVED
 RT01_STATUS=UNRESOLVED
 
-FOCUSED_TESTS_PASSED=23
-FULL_PYTEST_PASSED=115
+FOCUSED_TESTS_PASSED=28 (23 RT-03 isolation + 5 OCI configuration)
+FULL_PYTEST_PASSED=120
 FULL_PYTEST_FAILED=0
 STANDARD_BENCHMARK=105 scenarios / 100.0% / 0 observed high-impact false allows
 REDTEAM_BENCHMARK=220 scenarios / 99.55% / 0 observed high-impact false allows
@@ -62,7 +67,7 @@ CLAIMS_REVIEWED=YES; removed append-only-WAL, universal mediation, closed-host-a
 PUSH_PERFORMED=NO
 TAG_CREATED=NO
 DEPLOY_PERFORMED=NO
-RT03_FIX_READY_FOR_REVIEW=YES, scoped local candidate
+SCOPED_HARDENING_READY=YES, source update only; not deployment approval
 DEPLOY_READY=NO
 DEPLOY_BLOCKERS=OCI runtime/image/IPC proof; credential-free real-agent canary unavailable; RT01/RT02 unresolved for authoritative deployment
 NEXT_RED_TEAM_PRIORITY=finish OCI RT03 native validation and a safely supported real-agent canary, then RT02 mandatory mediation
@@ -160,10 +165,11 @@ and config resources. Host API/CLI inspection and MCP session correlation passed
 ## Validation and reproducibility
 
 One pytest process at a time; no xdist or `-n`. Focused changes were debugged first.
-Existing suites ran sequentially: storage/audit 12 passed, sandbox 18 passed, MCP
-5 passed, API/CLI 14 passed. Full project verification initially passed 114 tests;
-final review then added the absolute-deadline regression and the final full run
-passed 115. No broad suite was rerun without a relevant code change. Each replay
+Historical implementation suites ran sequentially: storage/audit 12 passed, sandbox 18 passed, MCP
+5 passed, API/CLI 14 passed. The pre-OCI full run passed 115. After adding the OCI
+configuration regressions, targeted runs passed: OCI configuration 5, RT-03
+isolation 23, sandbox/container 19, and API/CLI 14. The final full run passed
+120 tests with zero failures. No xdist or `-n` was used. Each replay
 benchmark ran once. All runs used an empty HOME, explicit source PYTHONPATH,
 disabled live Drex key and disposable resources. A pre-existing Starlette/httpx
 deprecation warning remained; no failure was weakened into a warning.
@@ -238,6 +244,8 @@ reported separately.
 | `docs/threat-model.md` | Correct limitations, measured validation count and audit scope |
 | `security/rt03/DESIGN.md` | Pre-implementation trust boundary, security property and design options |
 | `security/rt03/REPORT.md` | Final scoped evidence, limitations and review status |
+| `RELEASE_NOTES_v0.1.2.md` | Versioned patch notes with evidence and explicit unresolved limits |
+| `docs/ROADMAP.md` | Ordered future validation and product plans |
 | `security/rt03/after-sandbox.json` | Retained bounded disposable measurement or validation output |
 | `security/rt03/api-cli-tests.txt` | Retained bounded disposable measurement or validation output |
 | `security/rt03/attack-matrix.md` | Complete native before/after matrix |
@@ -274,6 +282,7 @@ reported separately.
 | `src/drex_agent_firewall/sandbox/python_runtime.py` | Read-only explicit dependency mounts without host parent exposure |
 | `tests/test_audit_manager.py` | Use real private host repository in capture test and close IPC |
 | `tests/test_rt03_audit_isolation.py` | 23 real namespace/MCP/native/IPC/failure/lifecycle regressions |
+| `tests/test_rt03_oci_config.py` | 5 mocked OCI configuration and fail-closed selection regressions; no runtime proof |
 
 ## COMMITS
 

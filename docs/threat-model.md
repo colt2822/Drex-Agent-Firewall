@@ -101,11 +101,11 @@ The application boundary mediates only calls routed through it. The outer runtim
 
 | Interaction Path | Mediation Status | Boundary & Enforcement Invariant |
 | :--- | :--- | :--- |
-| **MCP Tool Calls** | **INTERCEPTED** | Validated and intercepted via `McpFirewallProxy`. JSON-RPC protocol messages are decoded and normalized before execution. |
-| **Guarded Adapters** | **INTERCEPTED** | `ShellAdapter`, `FilesystemAdapter`, `GitAdapter`, `HttpAdapter`, and `GitHubAdapter` enforce workspace roots, network ranges, and deterministic rules. |
-| **Shell Pipelines & Subshells** | **INTERCEPTED** | `ShellNormalizer` recursively strips quote fragmentation, unrolls shell wrappers (`sh -c`, `bash -c`), decodes base64 pipes, and extracts inline code (`python -c`, `node -e`, `ruby -e`, `perl -e`, `awk`, `find -exec`). |
-| **Script Staging & Task Runners** | **INTERCEPTED** | Inline interpreters and modifications to execution manifests (`Makefile`, `package.json`, build hooks) are monitored for staged malicious commands. |
-| **Network & SSRF** | **INTERCEPTED** | Destination host, proxy environment variables (`HTTP_PROXY`, `ALL_PROXY`), redirect targets, and Unix domain socket HTTP clients are validated. |
+| **MCP Tool Calls** | **MEDIATED WHEN ROUTED THROUGH MCP** | Calls handled by `McpFirewallProxy` are decoded, normalized, and evaluated. Agents may use native channels outside this path. |
+| **Guarded Adapters** | **GUARDED WHEN USED** | `ShellAdapter`, `FilesystemAdapter`, `GitAdapter`, `HttpAdapter`, and `GitHubAdapter` apply their configured workspace, network, and deterministic rules. |
+| **Shell Pipelines & Subshells** | **PARTIAL / PARSER-DEPENDENT** | `ShellNormalizer` handles documented wrappers and inline interpreter forms; this does not establish complete mediation of native shell execution. |
+| **Script Staging & Task Runners** | **PARTIAL / INTEGRATION-DEPENDENT** | Some staged commands and execution manifests are inspected on guarded paths. Native execution can bypass those checks. |
+| **Network & SSRF** | **GUARDED PATHS ONLY** | Configured adapters and controlled egress validate destinations and proxies; arbitrary native network paths are outside mandatory mediation. |
 | **Direct Host Access** | **PARTIAL / BACKEND DEPENDENT** | Namespace and mount controls reduce access. The RT-03 candidate prevents the tested native Bubblewrap process from reaching its authoritative store, without relying on MCP mediation. Resource quotas and mandatory mediation remain unresolved; OCI was not runtime-tested in this audit and microVM remains a stub. This is not universal host containment. |
 
 ---
@@ -113,7 +113,7 @@ The application boundary mediates only calls routed through it. The outer runtim
 ## 6. Security Invariant Verification
 
 The following bounded evidence does not prove universal containment:
-1. **Automated Unit & Integration Tests**: The RT-03 candidate passed 115 project tests (92 release tests plus 23 focused regressions); see [retained evidence](../security/rt03/REPORT.md).
+1. **Automated Unit & Integration Tests**: The v0.1.2 candidate passed 120 tests; five added regressions check OCI configuration only, not runtime containment. See [retained evidence](../security/rt03/REPORT.md).
 2. **105-Scenario Standard Benchmark Suite**: 100.0% accuracy, 0.0% false allow rate.
 3. **220-Scenario Adversarial Red-Team Suite**: Rigorous bypass test suite across all 10 categories achieving **99.55% accuracy** and **0.0% high-impact false allows**.
 4. **186-Scenario Hostile Bypass Benchmark Suite**: Attacks against the mediation architecture directly (`drex_agent_firewall/benchmark/firewall_bypass/`) achieving **98.39% accuracy** and **0.0% high-impact false allows**.

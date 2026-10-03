@@ -1,0 +1,34 @@
+RT-03 v0.1.2 candidate validation
+Date: 2026-10-02
+Interpreter: /usr/bin/python3.12 via /home/colton-mcclain/.local/bin/pytest
+Environment: PYTHONUSERBASE=/home/colton-mcclain/.local; PYTHONPATH=src; isolated HOME=/tmp/drex-fw-rt03-validation-home
+Execution: sequential; one pytest process at a time; no xdist or -n
+
+OCI configuration:
+  pytest -q tests/test_rt03_oci_config.py
+  5 passed
+  Scope: generated mount/socket configuration and fail-closed backend selection with mocked runtime calls; Docker/Podman runtime behavior unvalidated.
+
+RT-03 isolation/writer/IPC:
+  pytest -q tests/test_rt03_audit_isolation.py
+  23 passed
+
+Sandbox/container:
+  pytest -q tests/test_sandbox.py tests/test_sandbox_controlled_online.py tests/test_audit_container_network.py
+  19 passed
+
+API/CLI:
+  pytest -q tests/test_api.py tests/test_cli.py
+  14 passed
+
+Full suite:
+  pytest -q
+  120 passed, 0 failed, 1 existing Starlette/httpx deprecation warning
+
+Synthetic managed Bubblewrap audit-store matrix:
+  26 tamper cases; 0 successful tamper events in the tested managed Bubblewrap scope.
+
+Docker: unavailable
+Podman: unavailable
+OCI runtime containment: NOT VALIDATED
+Global RT-03: UNRESOLVED
