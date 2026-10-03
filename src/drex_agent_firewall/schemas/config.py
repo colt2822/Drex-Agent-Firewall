@@ -110,11 +110,15 @@ class SandboxMount(BaseModel):
 
 class SandboxLimits(BaseModel):
     """Resource constraints for sandboxed agent processes."""
-    memory_mb: int = Field(default=4096, description="Memory limit in megabytes")
-    cpus: float = Field(default=2.0, description="CPU core quota")
-    pids: int = Field(default=128, description="Maximum concurrent process threads/pids")
-    timeout_seconds: float = Field(default=60.0, description="Execution timeout in seconds")
-    max_output_bytes: int = Field(default=10 * 1024 * 1024, description="Maximum captured stdout/stderr bytes")
+    cgroup_root: Optional[str] = Field(default=None, description="Trusted delegated cgroup-v2 parent; auto-discover if omitted")
+    max_open_files: int = Field(default=256, ge=32)
+    max_file_bytes: int = Field(default=64 * 1024 * 1024, gt=0)
+    tmp_mb: int = Field(default=128, gt=0)
+    memory_mb: int = Field(default=4096, gt=0, description="Memory limit in megabytes")
+    cpus: float = Field(default=2.0, gt=0, description="CPU core quota")
+    pids: int = Field(default=128, gt=0, description="Maximum concurrent process threads/pids")
+    timeout_seconds: float = Field(default=60.0, gt=0, description="Execution timeout in seconds")
+    max_output_bytes: int = Field(default=10 * 1024 * 1024, gt=0, description="Maximum captured stdout/stderr bytes")
 
 
 class SandboxConfig(BaseModel):
@@ -197,7 +201,7 @@ class FirewallConfig(BaseModel):
         cfg = get_policy_pack(pack_name)
         if "DREX_DATABASE_PATH" in os.environ:
             cfg.database_path = os.environ["DREX_DATABASE_PATH"]
-        if "DREX_API_KEY" in os.environ:
+        if os.environ.get("DREX_API_KEY"):
             cfg.provider.api_key = os.environ["DREX_API_KEY"]
             cfg.provider.type = "drex"
         return cfg

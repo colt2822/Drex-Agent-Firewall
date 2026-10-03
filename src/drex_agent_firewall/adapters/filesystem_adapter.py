@@ -8,6 +8,10 @@ import shutil
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from drex_agent_firewall.security.safe_filesystem import parent_fd, regular_fd, digest
+from contextlib import ExitStack
+import stat
+
 from drex_agent_firewall.adapters.base import BaseAdapter
 from drex_agent_firewall.constraints.enforcer import ConstraintEnforcer, ConstraintViolation
 from drex_agent_firewall.schemas.decision import FirewallDecision
@@ -152,46 +156,64 @@ class FilesystemAdapter(BaseAdapter):
                 error=f"Constraint violation: {str(cv)}",
             )
 
-        # 3. Track Pre-Operation State (Hash & Size)
-        prev_hash = _compute_sha256(canonical_path)
-        prev_size = os.path.getsize(canonical_path) if os.path.isfile(canonical_path) else None
-
-        # 4. Perform Operation
+        # Open trusted ancestors once; operations never reopen canonical paths.
         out_content = None
+        prev_hash = new_hash = None
+        prev_size = new_size = None
         try:
-            if operation == "read":
-                with open(canonical_path, "r", encoding="utf-8", errors="replace") as f:
-                    out_content = f.read(decision.constraints.max_output_bytes or (1024 * 1024))
-            elif operation in {"create", "modify"}:
-                data_to_write = content or ""
-                # Check byte limits
-                max_bytes = decision.constraints.max_bytes_written or (10 * 1024 * 1024)
-                if len(data_to_write.encode("utf-8")) > max_bytes:
-                    raise ConstraintViolation(f"Write exceeds max_bytes_written limit of {max_bytes}")
-                os.makedirs(os.path.dirname(canonical_path), exist_ok=True)
-                with open(canonical_path, "w", encoding="utf-8") as f:
-                    f.write(data_to_write)
-            elif operation == "delete":
-                if os.path.isdir(canonical_path):
-                    shutil.rmtree(canonical_path)
-                elif os.path.exists(canonical_path):
-                    os.remove(canonical_path)
-            elif operation == "mkdir":
-                os.makedirs(canonical_path, exist_ok=True)
-            elif operation == "rename":
-                if canonical_dest:
-                    os.rename(canonical_path, canonical_dest)
-            elif operation in {"list_dir", "list_directory"}:
-                if os.path.exists(canonical_path) and os.path.isdir(canonical_path):
-                    entries = sorted(os.listdir(canonical_path))
-                    out_content = "\n".join(entries)
-                elif os.path.isfile(canonical_path):
-                    out_content = os.path.basename(canonical_path)
-                else:
-                    out_content = ""
-
-            new_hash = _compute_sha256(canonical_path)
-            new_size = os.path.getsize(canonical_path) if os.path.isfile(canonical_path) else None
+            with ExitStack() as stack:
+                parent, leaf = stack.enter_context(parent_fd(
+                    canonical_path, decision.constraints.allowed_paths,
+                    create=operation in {"create", "modify", "mkdir"},
+                ))
+                if operation in {"read", "create", "modify"}:
+                    writing = operation != "read"
+                    data = (content or "").encode("utf-8")
+                    if writing and len(data) > (decision.constraints.max_bytes_written or 10 * 1024 * 1024):
+                        raise ConstraintViolation("Write exceeds max_bytes_written")
+                    fd = regular_fd(parent, leaf, write=writing)
+                    stack.callback(os.close, fd)
+                    prev_size = os.fstat(fd).st_size
+                    prev_hash = digest(fd)
+                    if writing:
+                        os.ftruncate(fd, 0)
+                        with os.fdopen(os.dup(fd), "wb") as stream:
+                            stream.write(data)
+                            stream.flush()
+                    else:
+                        out_content = os.read(fd, decision.constraints.max_output_bytes or 1024 * 1024).decode("utf-8", errors="replace")
+                    new_size = os.fstat(fd).st_size
+                    new_hash = digest(fd)
+                elif operation == "mkdir":
+                    try:
+                        os.mkdir(leaf, dir_fd=parent)
+                    except FileExistsError:
+                        fd = os.open(leaf, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+                        os.close(fd)
+                elif operation == "delete":
+                    try:
+                        info = os.stat(leaf, dir_fd=parent, follow_symlinks=False)
+                    except FileNotFoundError:
+                        info = None
+                    if info and stat.S_ISDIR(info.st_mode):
+                        if not shutil.rmtree.avoids_symlink_attacks:
+                            raise PermissionError("SAFE_RECURSIVE_DELETE_UNAVAILABLE")
+                        shutil.rmtree(leaf, dir_fd=parent)
+                    elif info:
+                        os.unlink(leaf, dir_fd=parent)
+                elif operation == "rename" and canonical_dest:
+                    dest_parent, dest_leaf = stack.enter_context(parent_fd(canonical_dest, decision.constraints.allowed_paths))
+                    os.rename(leaf, dest_leaf, src_dir_fd=parent, dst_dir_fd=dest_parent)
+                elif operation in {"list_dir", "list_directory"}:
+                    fd = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+                    stack.callback(os.close, fd)
+                    info = os.fstat(fd)
+                    if stat.S_ISDIR(info.st_mode):
+                        out_content = "\n".join(sorted(os.listdir(fd)))
+                    elif stat.S_ISREG(info.st_mode) and info.st_nlink == 1:
+                        out_content = leaf
+                    else:
+                        raise PermissionError("UNSAFE_FILE_TYPE_OR_HARDLINK")
 
             res = FilesystemResult(
                 operation=operation,
@@ -222,7 +244,7 @@ class FilesystemAdapter(BaseAdapter):
             return FilesystemResult(
                 operation=operation,
                 path=canonical_path,
-                allowed=True,
+                allowed=False,
                 firewall_decision=decision,
                 error=f"Filesystem operation failed: {str(e)}",
             )

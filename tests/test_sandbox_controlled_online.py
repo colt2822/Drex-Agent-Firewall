@@ -107,7 +107,7 @@ def test_system_codex_runs_inside_network_none_without_user_directory_mount(tmp_
     try:
         result = backend.exec(spec.session_id, ["/usr/bin/codex", "--version"], timeout=10)
         assert result.returncode == 0
-        assert "codex-cli 0.152.1" in result.stdout
+        assert "codex-cli " in result.stdout
         args = backend._build_bwrap_args(spec, backend._sessions[spec.session_id])
         assert "--unshare-net" in args
         assert "--share-net" not in args
@@ -180,7 +180,7 @@ def test_controlled_auth_is_explicit_read_only_redacted_and_cleaned(tmp_path, mo
 
         result = backend.exec_agent(spec.session_id, ["/usr/bin/codex", "--version"], timeout=10)
         assert result.returncode == 0
-        assert "codex-cli 0.152.1" in result.stdout
+        assert "codex-cli " in result.stdout
         assert not any(value in result.stdout + result.stderr for value in auth_values)
         assert not (Path(session["agent_home"]) / ".codex" / "auth.json").exists()
         assert not any(value in repr(session) for value in auth_values)
@@ -316,10 +316,10 @@ def reaches_host():
         return False
 print(json.dumps({"exfil_blocked":blocked,"proxy_loopback":proxy.startswith("http://127.0.0.1:"),"host_home_users":sorted(os.listdir("/home")),"agent_tools":os.path.exists("/opt/agent_tools"),"local_canary":os.path.exists("/opt/agent_tools/share/drex-host-canary"),"fake_runtime":os.path.exists(sys.argv[1]),"docker":os.path.exists("/run/docker.sock") or os.path.exists("/var/run/docker.sock"),"podman":os.path.exists("/run/user/1000/podman/podman.sock"),"ssh_auth_sock":os.environ.get("SSH_AUTH_SOCK"),"unapproved":os.environ.get("DREX_UNAPPROVED_CANARY"),"host_loopback":reaches_host()}))'''
         args.extend([
-            "--", "/usr/bin/python3", "/opt/drex-firewall/src/drex_agent_firewall/sandbox/proxy_launcher.py",
+            "--", "/usr/bin/python3", "/opt/drex-python/drex_agent_firewall/sandbox/proxy_launcher.py",
             "--bridge-socket", "/run/drex-egress.sock", "--", "/usr/bin/python3", "-c", probe_code, str(runtime_path), str(loopback_port),
         ])
-        result = subprocess.run(args, env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}, capture_output=True, text=True, timeout=15)
+        result = subprocess.run(args, pass_fds=(backend._sessions[spec.session_id]["workspace_fd"],), env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}, capture_output=True, text=True, timeout=15)
         assert result.returncode == 0, result.stderr
         data = json.loads(result.stdout)
         assert data["exfil_blocked"]

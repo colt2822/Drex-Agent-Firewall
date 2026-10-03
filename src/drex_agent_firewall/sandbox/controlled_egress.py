@@ -13,6 +13,7 @@ import os
 import select
 import socket
 import threading
+import time
 from typing import FrozenSet, Optional
 
 
@@ -59,7 +60,12 @@ def _connect_public(host: str, port: int) -> socket.socket:
 
 def _recv_line(sock: socket.socket, limit: int = 512) -> bytes:
     data = bytearray()
+    deadline = time.monotonic() + 3.0
     while len(data) < limit:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("controlled egress frame deadline")
+        sock.settimeout(remaining)
         byte = sock.recv(1)
         if not byte:
             break
@@ -70,6 +76,8 @@ def _recv_line(sock: socket.socket, limit: int = 512) -> bytes:
 
 
 def _relay(bridge: socket.socket, upstream: socket.socket) -> None:
+    bridge.settimeout(3.0)
+    upstream.settimeout(3.0)
     agent_write_closed = False
     upstream_write_closed = False
     while not (agent_write_closed and upstream_write_closed):
@@ -147,6 +155,7 @@ class ControlledEgressBroker:
                 connection.sendall(b"ERR upstream\n")
                 return
             connection.sendall(b"OK\n")
+            connection.settimeout(None)
             _relay(connection, upstream)
         except (BrokenPipeError, ConnectionResetError, OSError, ValueError):
             pass
@@ -169,6 +178,9 @@ class ControlledEgressBroker:
                 except OSError:
                     return
                 with self._active_lock:
+                    if len(self._active) >= 16:
+                        connection.close()
+                        continue
                     self._active.add(connection)
                 threading.Thread(
                     target=self._serve_connection,

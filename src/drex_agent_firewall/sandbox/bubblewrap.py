@@ -24,11 +24,13 @@ from drex_agent_firewall.sandbox.backend import (
 )
 from drex_agent_firewall.security.environment import is_sensitive_environment_name as _blocked_environment_name
 from drex_agent_firewall.utils.process_io import bounded_communicate
+from drex_agent_firewall.sandbox.resource_guard import ResourceGuard
+from drex_agent_firewall.security.safe_filesystem import parent_fd, validate_workspace_tree
 
 logger = logging.getLogger(__name__)
 
 _SENSITIVE_AUTH_KEY = re.compile(r"(?i)(token|secret|api.?key|password|cookie|account)")
-_PROXY_LAUNCHER = "/opt/drex-firewall/src/drex_agent_firewall/sandbox/proxy_launcher.py"
+_PROXY_LAUNCHER = "/opt/drex-python/drex_agent_firewall/sandbox/proxy_launcher.py"
 
 class BubblewrapBackend(IsolationBackend):
     """Bubblewrap (bwrap) unprivileged rootless container isolation backend.
@@ -79,7 +81,7 @@ class BubblewrapBackend(IsolationBackend):
     def prepare(self, spec: SandboxSpec) -> bool:
         """Prepare ephemeral sandbox filesystem and enforce fail-closed invariants."""
         # Fail closed on missing workspace
-        if not os.path.exists(spec.workspace_path):
+        if not os.path.isdir(spec.workspace_path):
             raise FileNotFoundError(f"Sandbox workspace path does not exist: {spec.workspace_path}")
 
         real_workspace = os.path.realpath(spec.workspace_path)
@@ -88,11 +90,24 @@ class BubblewrapBackend(IsolationBackend):
         if spec.network_mode == "controlled-online" and spec.agent_type not in ("codex", "claude"):
             raise ValueError("controlled-online requires agent_type='codex' or 'claude'")
 
+        # Read-only mounts are ineffective if a second writable alias exposes
+        # the same host inode tree. Protect code, runtime and every RO grant.
+        package_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        protected_sources = [package_root, "/usr", "/bin", "/sbin", "/lib", "/lib64"]
+        protected_sources += [os.path.realpath(m.host_path) for m in spec.extra_mounts if m.mode == "ro"]
+        writable_sources = [real_workspace] if spec.workspace_mode == "rw" else []
+        writable_sources += [os.path.realpath(m.host_path) for m in spec.extra_mounts if m.mode == "rw"]
+        for source in writable_sources:
+            for protected in protected_sources:
+                common = os.path.commonpath([source, os.path.realpath(protected)])
+                if common in (source, os.path.realpath(protected)):
+                    raise ValueError("SELF_TAMPER_MOUNT_OVERLAP: writable alias overlaps a protected mount")
+
         # Strictly prevent exposing root or host home as workspace
         if not spec.expose_host_root and real_workspace == "/":
             raise ValueError("Refusing to mount host root '/' as sandbox workspace")
 
-        if not spec.expose_host_home and real_workspace == real_home:
+        if not spec.expose_host_home and os.path.commonpath([real_workspace, real_home]) == real_workspace:
             raise ValueError(
                 f"Refusing to mount host home directory '{real_home}' as sandbox workspace. "
                 "Use a subdirectory or set expose_host_home=True explicitly."
@@ -100,7 +115,7 @@ class BubblewrapBackend(IsolationBackend):
 
         protected_user_paths = [
             os.path.join(real_home, ".local"),
-            os.path.join(real_home, ".codex"),
+            *[os.path.join(real_home, name) for name in (".codex", ".claude", ".ssh", ".config", ".aws", ".kube", ".gnupg", ".git-credentials")],
         ]
         for protected_path in protected_user_paths:
             if real_workspace == protected_path or real_workspace.startswith(protected_path + os.sep):
@@ -114,40 +129,66 @@ class BubblewrapBackend(IsolationBackend):
                     f"Refusing to mount sensitive system path '{real_workspace}' as sandbox workspace"
                 )
 
+        if spec.session_id in self._sessions:
+            raise ValueError("SESSION_ALREADY_EXISTS")
+        guard = ResourceGuard(spec.limits)
+        # Pin the workspace inode so later path swaps cannot select another tree.
+        try:
+            with parent_fd(real_workspace, [real_workspace]) as (parent, leaf):
+                workspace_fd = os.open(leaf, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent)
+                try:
+                    validate_workspace_tree(workspace_fd)
+                except Exception:
+                    os.close(workspace_fd)
+                    raise
+        except Exception:
+            guard.close()
+            raise
+
         # Create ephemeral session directory
         safe_session_id = re.sub(r"[^A-Za-z0-9_-]", "_", spec.session_id)[:48] or "session"
-        session_tmp = tempfile.mkdtemp(prefix=f"drex_sandbox_{safe_session_id}_")
-        os.chmod(session_tmp, 0o700)
-        agent_home = os.path.join(session_tmp, "home")
-        os.makedirs(agent_home, mode=0o700, exist_ok=True)
+        session_tmp = None
+        try:
+            session_tmp = tempfile.mkdtemp(prefix=f"drex_sandbox_{safe_session_id}_")
+            os.chmod(session_tmp, 0o700)
+            agent_home = os.path.join(session_tmp, "home")
+            os.makedirs(agent_home, mode=0o700, exist_ok=True)
 
-        # Create minimal synthetic passwd file
-        passwd_path = os.path.join(session_tmp, "passwd")
-        with open(passwd_path, "w") as f:
-            f.write("root:x:0:0:root:/root:/bin/bash\n")
-            f.write("agent:x:1000:1000:Drex Agent:/home/agent:/bin/bash\n")
-            f.write("nobody:x:65534:65534:nobody:/nonexistent:/bin/false\n")
+            # Create minimal synthetic passwd file
+            passwd_path = os.path.join(session_tmp, "passwd")
+            with open(passwd_path, "w") as f:
+                f.write("root:x:0:0:root:/root:/bin/bash\n")
+                f.write("agent:x:1000:1000:Drex Agent:/home/agent:/bin/bash\n")
+                f.write("nobody:x:65534:65534:nobody:/nonexistent:/bin/false\n")
 
-        # Session-local tool wrappers, if any. System-installed tools stay under
-        # the read-only /usr mount; host ~/.local is never mounted.
-        session_bin = os.path.join(session_tmp, "bin")
-        os.makedirs(session_bin, exist_ok=True)
+            # Session-local tool wrappers, if any. System-installed tools stay under
+            # the read-only /usr mount; host ~/.local is never mounted.
+            session_bin = os.path.join(session_tmp, "bin")
+            os.makedirs(session_bin, exist_ok=True)
 
-        hosts_path = os.path.join(session_tmp, "hosts")
-        with open(hosts_path, "w", encoding="ascii") as f:
-            f.write("127.0.0.1 localhost\n::1 localhost\n")
+            hosts_path = os.path.join(session_tmp, "hosts")
+            with open(hosts_path, "w", encoding="ascii") as f:
+                f.write("127.0.0.1 localhost\n::1 localhost\n")
 
-        self._sessions[spec.session_id] = {
-            "spec": spec,
-            "session_tmp": session_tmp,
-            "session_bin": session_bin,
-            "agent_home": agent_home,
-            "passwd_path": passwd_path,
-            "hosts_path": hosts_path,
-            "real_workspace": real_workspace,
-            "status": SandboxStatus.CREATED,
-            "pids": set(),
-        }
+            self._sessions[spec.session_id] = {
+                "spec": spec,
+                "resource_guard": guard,
+                "workspace_fd": workspace_fd,
+                "session_tmp": session_tmp,
+                "session_bin": session_bin,
+                "agent_home": agent_home,
+                "passwd_path": passwd_path,
+                "hosts_path": hosts_path,
+                "real_workspace": real_workspace,
+                "status": SandboxStatus.CREATED,
+                "pids": set(),
+            }
+        except Exception:
+            guard.close()
+            os.close(workspace_fd)
+            if session_tmp:
+                shutil.rmtree(session_tmp, ignore_errors=True)
+            raise
         return True
 
     def _build_bwrap_args(
@@ -204,9 +245,10 @@ class BubblewrapBackend(IsolationBackend):
         # Selective /etc mounts — isolated network modes use a synthetic hosts
         # file and do not receive the host resolver configuration.
         etc_required_files = [
-            "/etc/ssl",             # CA certificates for TLS
+            "/etc/ssl/certs",       # Public CA certificates only; never ssl/private
             "/etc/ca-certificates", # CA certificate bundles
-            "/etc/pki",             # PKI on RHEL-based systems
+            "/etc/pki/ca-trust",    # Public CA trust on RHEL-based systems
+            "/etc/pki/tls/certs",
             "/etc/nsswitch.conf",   # Name service switch configuration
             "/etc/ld.so.conf",      # Dynamic linker configuration
             "/etc/ld.so.conf.d",    # Dynamic linker configuration directory
@@ -240,8 +282,8 @@ class BubblewrapBackend(IsolationBackend):
         args.extend(["--proc", "/proc", "--dev", "/dev"])
 
         # Ephemeral mounts
-        args.extend(["--tmpfs", "/tmp"])
-        args.extend(["--bind", session_data["agent_home"], "/home/agent"])
+        args.extend(["--size", str(spec.limits.tmp_mb * 1024 * 1024), "--tmpfs", "/tmp"])
+        args.extend(["--size", str(spec.limits.tmp_mb * 1024 * 1024), "--tmpfs", "/home/agent"])
 
         if egress_socket_path:
             if not os.path.exists(egress_socket_path) or not stat.S_ISSOCK(os.stat(egress_socket_path).st_mode):
@@ -263,19 +305,21 @@ class BubblewrapBackend(IsolationBackend):
         if "session_bin" in session_data and os.path.exists(session_data["session_bin"]):
             args.extend(["--ro-bind", session_data["session_bin"], "/opt/agent_bin"])
 
-        drex_repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
-        if os.path.exists(os.path.join(drex_repo_root, "src", "drex_agent_firewall")):
-            args.extend(["--ro-bind", drex_repo_root, "/opt/drex-firewall"])
+        # Mount only package code, including wheel installs; never a whole checkout
+        # with ignored DBs, configs or other operator data.
+        package_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        args.extend(["--ro-bind", package_root, "/opt/drex-python/drex_agent_firewall"])
 
         # Extra User/Policy Mounts
         for m in spec.extra_mounts:
-            if os.path.exists(m.host_path):
-                bind_flag = "--bind" if m.mode == "rw" else "--ro-bind"
-                args.extend([bind_flag, m.host_path, m.container_path])
+            if not os.path.exists(m.host_path):
+                raise RuntimeError("MOUNT_SETUP_FAILURE: required mount is missing")
+            bind_flag = "--bind" if m.mode == "rw" else "--ro-bind"
+            args.extend([bind_flag, m.host_path, m.container_path])
 
         # Workspace mount
         workspace_flag = "--bind" if spec.workspace_mode == "rw" else "--ro-bind"
-        args.extend([workspace_flag, session_data["real_workspace"], "/workspace"])
+        args.extend([workspace_flag, f"/proc/self/fd/{session_data['workspace_fd']}", "/workspace"])
         args.extend(["--chdir", "/workspace"])
 
         # Environment Cleansing and Allowlisting
@@ -286,6 +330,9 @@ class BubblewrapBackend(IsolationBackend):
         for k, v in env_vars.items():
             args.extend(["--setenv", k, v])
 
+        # Root directories are synthetic but must also be immutable: otherwise
+        # an agent could create new /etc or /run files outside granted paths.
+        args.extend(["--remount-ro", "/"])
         return args
 
     def _sanitize_environment(self, spec: SandboxSpec) -> Dict[str, str]:
@@ -481,7 +528,8 @@ class BubblewrapBackend(IsolationBackend):
 
             clean_launcher_env = {"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"}
             proc = subprocess.Popen(
-                bwrap_args,
+                session_data["resource_guard"].wrap(bwrap_args, spec.limits),
+                pass_fds=(session_data["resource_guard"].fd, session_data["workspace_fd"]),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -497,6 +545,8 @@ class BubblewrapBackend(IsolationBackend):
             stdout_str = self._redact_runtime_auth(captured.stdout, secret_values)
             stderr_str = self._redact_runtime_auth(captured.stderr, secret_values)
             if captured.timed_out:
+                session_data["resource_guard"].kill()
+                session_data["status"] = SandboxStatus.FAILED
                 stderr_str += f"\n[DREX_SANDBOX_TIMEOUT]: Execution timed out after {exec_timeout}s"
                 return SandboxResult(
                     returncode=124,
@@ -556,7 +606,7 @@ class BubblewrapBackend(IsolationBackend):
         )
         if probe_res.returncode != 0:
             session_data["status"] = SandboxStatus.FAILED
-            raise RuntimeError(f"Sandbox boundary verification failed: {probe_res.stderr}")
+            raise RuntimeError(f"SANDBOX_UNAVAILABLE: Sandbox boundary verification failed: {probe_res.stderr}")
 
         return SandboxSessionInfo(
             session_id=spec.session_id,
@@ -585,6 +635,8 @@ class BubblewrapBackend(IsolationBackend):
             raise KeyError(f"Unknown sandbox session: {session_id}")
 
         session_data = self._sessions[session_id]
+        if session_data["status"] not in (SandboxStatus.CREATED, SandboxStatus.RUNNING):
+            raise RuntimeError("SESSION_NOT_RUNNING")
         spec: SandboxSpec = session_data["spec"]
         max_bytes = spec.limits.max_output_bytes
         exec_timeout = timeout or spec.limits.timeout_seconds
@@ -612,9 +664,11 @@ class BubblewrapBackend(IsolationBackend):
         bwrap_args.extend(command)
 
         start_t = time.perf_counter()
+        proc = None
         try:
             proc = subprocess.Popen(
-                bwrap_args,
+                session_data["resource_guard"].wrap(bwrap_args, spec.limits),
+                pass_fds=(session_data["resource_guard"].fd, session_data["workspace_fd"]),
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -632,6 +686,8 @@ class BubblewrapBackend(IsolationBackend):
             stdout_str = captured.stdout
             stderr_str = captured.stderr
             if captured.timed_out:
+                session_data["resource_guard"].kill()
+                session_data["status"] = SandboxStatus.FAILED
                 stderr_str += f"\n[DREX_SANDBOX_TIMEOUT]: Execution timed out after {exec_timeout}s"
 
             session_data["pids"].discard(proc.pid)
@@ -646,20 +702,30 @@ class BubblewrapBackend(IsolationBackend):
             )
 
         except Exception as e:
+            session_data["resource_guard"].kill()
+            session_data["status"] = SandboxStatus.FAILED
             duration = time.perf_counter() - start_t
             return SandboxResult(
                 returncode=-1,
                 stdout="",
-                stderr=str(e),
+                stderr=f"SANDBOX_UNAVAILABLE: {type(e).__name__}",
                 duration_seconds=round(duration, 3),
-                error=str(e),
+                error="SANDBOX_UNAVAILABLE",
             )
+
+        finally:
+            if proc is not None:
+                if proc.poll() is None:
+                    proc.kill()
+                    proc.wait(timeout=3)
+                session_data["pids"].discard(proc.pid)
 
     def stop(self, session_id: str) -> bool:
         """Terminate all lingering processes."""
         if session_id not in self._sessions:
             return False
         session_data = self._sessions[session_id]
+        session_data["resource_guard"].kill()
         for pid in list(session_data["pids"]):
             try:
                 os.kill(pid, 9)
@@ -674,6 +740,8 @@ class BubblewrapBackend(IsolationBackend):
         self.stop(session_id)
         if session_id in self._sessions:
             session_data = self._sessions.pop(session_id)
+            session_data["resource_guard"].close()
+            os.close(session_data["workspace_fd"])
             tmp_dir = session_data.get("session_tmp")
             if tmp_dir and os.path.exists(tmp_dir):
                 shutil.rmtree(tmp_dir, ignore_errors=True)
