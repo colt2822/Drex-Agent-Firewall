@@ -3,8 +3,16 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
+import sqlite3
+import shutil
+import shlex
 import sys
+import subprocess
+import tempfile
+import time
+from pathlib import Path
 from datetime import datetime, timezone
 from typing import List, Optional
 import click
@@ -14,7 +22,7 @@ from rich.table import Table
 
 from drex_agent_firewall.benchmark.runner import BenchmarkRunner
 from drex_agent_firewall.persistence.repository import ActionRepository
-from drex_agent_firewall.schemas.config import FirewallConfig
+from drex_agent_firewall.schemas.config import ConfigLoadError, FirewallConfig
 from drex_agent_firewall.schemas.decision import FinalDecision, FirewallDecision
 from drex_agent_firewall.sdk.client import DrexFirewall
 from drex_agent_firewall.cli.sandbox_cli import sandbox_group
@@ -33,10 +41,195 @@ def cli():
 cli.add_command(sandbox_group)
 
 
+def _roots():
+    config = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "drex-firewall"
+    data = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "drex-firewall"
+    return config, data
+
+
+def _entry_digest(entry: dict) -> str:
+    return hashlib.sha256(json.dumps(entry, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _write_private_text(path: Path, text: str):
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(text)
+        os.replace(temporary, path)
+    except Exception:
+        try:
+            os.unlink(temporary)
+        except OSError:
+            pass
+        raise
+
+
+def _write_private_json(path: Path, value: dict):
+    _write_private_text(path, json.dumps(value, indent=2) + "\n")
+
+
+@cli.command("init")
+@click.option("--force", is_flag=True, help="Replace the Drex config and default policy files.")
+def init_cmd(force: bool):
+    """Initialize user-scoped configuration and local audit storage."""
+    import yaml
+    from drex_agent_firewall.persistence.database import init_db
+    from drex_agent_firewall.schemas.config import FirewallConfig
+    config_root, data_root = _roots()
+    policy = config_root / "policy.yaml"
+    audit_db = Path(os.environ.get("DREX_DATABASE_PATH", data_root / "audit.db")).expanduser()
+    config_root.mkdir(parents=True, exist_ok=True)
+    data_root.mkdir(parents=True, exist_ok=True)
+    defaults = {policy: yaml.safe_dump(FirewallConfig().model_dump(mode="json"), sort_keys=True)}
+    for path, content in defaults.items():
+        if path.exists() and not force:
+            continue
+        if path.exists():
+            backup = path.with_suffix(path.suffix + f".bak-{time.time_ns()}")
+            shutil.copy2(path, backup)
+            click.echo(f"Backup: {backup}")
+        _write_private_text(path, content)
+    init_db(str(audit_db)).close()
+    click.echo(f"CONFIG_ROOT={config_root}")
+    click.echo(f"DATA_ROOT={data_root}")
+    click.echo(f"AUDIT_DB={audit_db}")
+    click.echo(f"DEFAULT_POLICY={policy}")
+
+
+@cli.command("canary")
+def canary_cmd():
+    """Run the harmless ALLOW/BLOCK alpha canary through the real MCP proxy."""
+    from tempfile import TemporaryDirectory
+    with TemporaryDirectory(prefix="drex-alpha-canary-") as tmp:
+        counter = Path(tmp) / "upstream-invocations.txt"
+        upstream = " ".join([shlex.quote(sys.executable), "-m", "drex_agent_firewall.demo.canary_server",
+                             "--counter", shlex.quote(str(counter))])
+        requests = [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"clientInfo": {"name": "Drex alpha canary", "version": "local"}}},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list", "params": {}},
+            {"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {"name": "read_safe_fixture", "arguments": {}}},
+            {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "delete_test_workspace", "arguments": {"path": "/workspace/disposable-fixture"}}},
+        ]
+        command = [sys.executable, "-c", "from drex_agent_firewall.cli.main import cli; cli()", "mcp-proxy", "--upstream", upstream]
+        try:
+            result = subprocess.run(command, input="".join(json.dumps(item) + "\n" for item in requests),
+                                    text=True, capture_output=True, timeout=15)
+            responses = [json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")]
+            by_id = {item.get("id"): item for item in responses}
+            if result.returncode or 3 not in by_id or 4 not in by_id:
+                raise click.ClickException("Canary proxy did not complete; no direct fallback was attempted. Check audit startup and rerun 'drex-firewall canary'.")
+            safe = by_id[3]
+            blocked = by_id[4]
+            safe_allowed = "result" in safe and "error" not in safe
+            block_decision = blocked.get("error", {}).get("data", {}).get("decision")
+            calls = counter.read_text(encoding="utf-8").splitlines() if counter.exists() else []
+            safe_count = calls.count("read_safe_fixture")
+            blocked_count = calls.count("delete_test_workspace")
+            click.echo(f"SAFE CALL -> {'ALLOW' if safe_allowed else 'FAIL'}")
+            click.echo(f"SAFE_UPSTREAM_EXECUTIONS={safe_count}")
+            click.echo(f"DESTRUCTIVE CALL -> {block_decision or 'FAIL'}")
+            click.echo(f"BLOCKED_UPSTREAM_EXECUTIONS={blocked_count}")
+            if not safe_allowed or safe_count != 1 or block_decision != "BLOCK" or blocked_count != 0:
+                raise click.ClickException("Canary expectations failed. No user files are touched; inspect 'drex-firewall trace'.")
+            click.echo("\n$ drex-firewall trace")
+            trace = subprocess.run([sys.executable, "-c", "from drex_agent_firewall.cli.main import cli; cli()", "trace", "--limit", "4"],
+                                  text=True, capture_output=True, timeout=10)
+            click.echo(trace.stdout, nl=False)
+            if trace.returncode:
+                click.echo("Trace command failed; the audit database is preserved. Check DREX_DATABASE_PATH.", err=True)
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise click.ClickException(f"Canary could not complete ({type(exc).__name__}); no user files are touched. Check audit startup and retry.")
+
+
+@cli.group("configure")
+def configure_group():
+    """Configure supported agent integrations."""
+
+
+@configure_group.command("claude")
+@click.option("--upstream", required=False, help="Upstream MCP command (quoted as one command string).")
+@click.option("--dry-run", is_flag=True)
+@click.option("--undo", is_flag=True)
+def configure_claude(upstream: Optional[str], dry_run: bool, undo: bool):
+    """Add or remove a user-scoped Claude Code MCP proxy entry."""
+    path = Path.home() / ".claude.json"
+    server_name = "drex-alpha"
+    manifest = path.with_name(".drex-firewall-claude.json")
+    if undo:
+        if not manifest.exists():
+            raise click.ClickException("No Drex-managed Claude entry found; nothing was changed.")
+        try:
+            managed = json.loads(manifest.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            raise click.ClickException(f"Drex undo metadata is unreadable ({type(exc).__name__}); Claude settings were not changed.")
+        if not path.exists():
+            raise click.ClickException("Claude config is missing; Drex did not modify it.")
+        try:
+            data = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            raise click.ClickException(f"Claude config could not be read ({type(exc).__name__}); no changes made. Repair {path} first.")
+        if not isinstance(data, dict) or not isinstance(data.get("mcpServers", {}), dict):
+            raise click.ClickException(f"Claude config has an unexpected structure; no changes made. Repair {path} first.")
+        entry = data.get("mcpServers", {}).get(server_name)
+        if not isinstance(managed, dict) or _entry_digest(entry) != managed.get("installed_entry_sha256"):
+            raise click.ClickException("Claude Drex entry changed since install; refusing to remove it. Resolve manually and preserve other settings.")
+        if dry_run:
+            click.echo(f"Would remove {server_name} from {path}; audit history remains at {_roots()[1] / 'audit.db'}")
+            return
+        shutil.copy2(path, path.with_suffix(path.suffix + f".bak-{time.time_ns()}"))
+        data["mcpServers"].pop(server_name)
+        if not data["mcpServers"]:
+            data.pop("mcpServers")
+        _write_private_json(path, data)
+        manifest.unlink()
+        click.echo(f"Removed Drex integration from {path}; audit data preserved.")
+        return
+    if not upstream:
+        raise click.ClickException("Provide --upstream with the MCP server command. Use --dry-run to inspect changes first.")
+    if shutil.which("claude") is None:
+        raise click.ClickException("Claude Code was not found on PATH. Install Claude Code, then rerun this command.")
+    try:
+        data = json.loads(path.read_text()) if path.exists() else {}
+    except (OSError, json.JSONDecodeError) as exc:
+        raise click.ClickException(f"Claude config could not be read ({type(exc).__name__}); no changes made. Back up or repair {path}.")
+    if not isinstance(data, dict) or not isinstance(data.get("mcpServers", {}), dict):
+        raise click.ClickException(f"Claude config has an unexpected structure; no changes made. Repair {path} first.")
+    servers = data.setdefault("mcpServers", {})
+    installed_entry = {"command": "drex-firewall", "args": ["mcp-proxy", "--upstream", upstream]}
+    if server_name in servers and servers[server_name] != installed_entry:
+        raise click.ClickException(f"{server_name} already exists with different settings; rename it or edit {path} manually.")
+    if manifest.exists():
+        try:
+            previous = json.loads(manifest.read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            raise click.ClickException(f"Drex undo metadata is unreadable ({type(exc).__name__}); no changes made.")
+        if previous.get("installed_entry_sha256") != _entry_digest(installed_entry):
+            raise click.ClickException("Drex-managed configuration uses another upstream; run --undo before replacing it.")
+    if dry_run:
+        click.echo(f"Would write {path}: mcpServers.{server_name} = {json.dumps(installed_entry)}")
+        return
+    if path.exists():
+        backup = path.with_suffix(path.suffix + f".bak-{time.time_ns()}")
+        shutil.copy2(path, backup)
+        click.echo(f"Backup: {backup}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data["mcpServers"][server_name] = installed_entry
+    _write_private_json(path, data)
+    _write_private_json(manifest, {"installed_entry_sha256": _entry_digest(installed_entry)})
+    click.echo(f"Configured Claude Code at {path}; added mcpServers.{server_name}.")
+
+
 @cli.command("health")
 def health_cmd():
     """Check firewall status, provider mode, and database connection."""
-    fw = DrexFirewall()
+    try:
+        fw = DrexFirewall()
+    except ConfigLoadError as exc:
+        raise click.ClickException(f"{exc}. No action was executed; repair the policy file or run 'drex-firewall init --force' (which saves a backup).")
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        raise click.ClickException(f"Audit database startup failed; no tool action was executed ({type(exc).__name__}). Check DREX_DATABASE_PATH or run 'drex-firewall init'.")
     prov_name = fw.engine.provider.provider_name
     model = fw.config.provider.requested_model
 
@@ -119,19 +312,22 @@ def shell_cmd(cmd_args: List[str]):
 
 
 @cli.command("trace")
-@click.argument("trace_id", required=True)
-def trace_cmd(trace_id: str):
-    """Inspect full decision trace by trace ID or action ID."""
+@click.argument("trace_id", required=False)
+@click.option("--limit", default=10, type=click.IntRange(1, 100))
+def trace_cmd(trace_id: Optional[str], limit: int):
+    """Inspect a trace/action, or the most recent audit records."""
     fw = DrexFirewall()
-    actions = fw.get_trace(trace_id)
-    if not actions:
+    actions = fw.get_trace(trace_id) if trace_id else []
+    if trace_id and not actions:
         # Check action ID lookup
         act = fw.get_action(trace_id)
         if act:
             actions = [act]
 
+    if not trace_id:
+        actions = list(reversed(fw.repository.list_actions(limit=limit)))
     if not actions:
-        console.print(f"[red]No records found for trace/action ID '{trace_id}'[/red]")
+        console.print("[yellow]No audit records found. Run a protected MCP action, then retry.[/yellow]")
         sys.exit(1)
 
     for i, act in enumerate(actions, 1):
@@ -149,15 +345,19 @@ def trace_cmd(trace_id: str):
         arguments = arguments if len(arguments) <= 2000 else arguments[:2000] + "... [TRUNCATED]"
         constraints = constraints if len(constraints) <= 2000 else constraints[:2000] + "... [TRUNCATED]"
         execution_result = execution_result if len(execution_result) <= 1000 else execution_result[:1000] + "... [TRUNCATED]"
+        if act.get("executed") and "outcome_unknown" in execution_result:
+            execution_status = "UPSTREAM INVOKED; OUTCOME UNKNOWN"
+        else:
+            execution_status = "YES" if act.get("executed") else "NO"
         info = f"""Step {i}: [{style}]{dec}[/{style}] | Tool: {act['tool']}:{act['operation']}
-Time: {timestamp} | Agent/client: {act.get('agent') or 'unknown'}
+Time: {timestamp} | Agent/client: {act.get('agent') or 'unknown'} | Session: {act.get('session_id') or 'unknown'}
 Target: {act['normalized_target']}
 Arguments (redacted): {arguments}
 Reason: {act['reason']}
 Type: {'HARD_INVARIANT' if act['hard_policy_triggered'] else 'PROBABILISTIC_DREX'}
 Provider/model: {act.get('provider') or 'none'} / {act.get('resolved_model') or 'none'}
 Policy latency: {float(act.get('latency_ms') or 0):.2f} ms | Provider latency: {float(act.get('provider_latency_ms') or 0):.2f} ms
-Executed: {'YES' if act.get('executed') else 'NO'} | Error: {act.get('error_class') or 'none'}
+Execution status: {execution_status} | Error: {act.get('error_class') or 'none'}
 Result: {execution_result}
 Constraints: {constraints}"""
         console.print(Panel(info, title=f"Action {act['action_id'][:8]}", border_style=style))
@@ -450,7 +650,12 @@ def serve_cmd(host: str, port: int, policy: Optional[str]):
 @click.option("--upstream", "-u", required=True, help="Command to spawn upstream MCP server")
 def mcp_proxy_cmd(upstream: str):
     """Run continuous MCP JSON-RPC 2.0 stdio proxy wrapping an upstream MCP server."""
-    fw = DrexFirewall()
+    try:
+        fw = DrexFirewall()
+    except ConfigLoadError as exc:
+        raise click.ClickException(f"{exc}. Drex did not start the upstream and no action executed; repair the policy file or run 'drex-firewall init --force' (which saves a backup).")
+    except (OSError, sqlite3.Error, ValueError) as exc:
+        raise click.ClickException(f"Audit database startup failed; Drex did not start the upstream, so no action executed ({type(exc).__name__}). Check DREX_DATABASE_PATH or run 'drex-firewall init'.")
     from drex_agent_firewall.adapters.mcp_proxy import McpFirewallProxy
 
     proxy = McpFirewallProxy(fw.engine, fw.repository, fw.normalizer)

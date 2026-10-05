@@ -8,6 +8,9 @@ This release candidate consolidates the K3 host-boundary hardening and adds a bo
 - Pins tests to the source tree under test and records the tested Git HEAD, preventing an older editable installation from silently satisfying or failing the suite.
 - Defines a fail-closed MCP subset: `tools/call` and `resources/read` are policy evaluated and audited; inventory methods are validated and recorded; unsupported methods are rejected.
 - Adds a Claude Code stdio MCP canary fixture and shows CLI audit inspection through `drex-firewall trace`.
+- Adds user-scoped `drex-firewall init`, Claude MCP configuration with dry-run/backup/undo, recent human-readable trace output, and XDG audit paths.
+- On a real upstream response timeout, terminates the upstream process group, records that invocation occurred with an unknown outcome, and never retries. Restart the MCP session to reconnect.
+- Adds an external alpha quickstart and test kit. See [docs/QUICKSTART_EXTERNAL_ALPHA.md](docs/QUICKSTART_EXTERNAL_ALPHA.md).
 - Documents the local MCP boundary in [SECURITY_BOUNDARY.md](SECURITY_BOUNDARY.md) and the method contract and install flow in [docs/mcp-alpha.md](docs/mcp-alpha.md).
 
 ## Verification
@@ -15,6 +18,8 @@ This release candidate consolidates the K3 host-boundary hardening and adds a bo
 - Source-pinned suite: 213 passed, zero failed, zero skipped on the release commit.
 - Clean virtualenv install plus Claude Code 2.1.289 MCP canary: safe fixture call allowed; destructive fixture call blocked; zero blocked calls reached upstream.
 - Measured install through first protected call: 16.369 seconds in this environment.
+- Updated source-pinned suite: 223 passed, zero failed, zero skipped.
+- A wheel installed into a new virtual environment and ran with Claude Code 2.1.289: harmless fixture call `ALLOW`; destructive fixture call `BLOCK`; blocked upstream invocation count 0; generated user config was undone.
 
 ## Known limits
 

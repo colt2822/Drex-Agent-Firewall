@@ -21,6 +21,15 @@ from drex_agent_firewall.constraints.enforcer import ConstraintEnforcer, Constra
 from drex_agent_firewall.schemas.decision import FirewallDecision
 
 
+class UpstreamForwardError(RuntimeError):
+    """Transport/protocol failure with evidence about whether stdin was flushed."""
+
+    def __init__(self, error_class: str, dispatched: bool):
+        self.error_class = error_class
+        self.dispatched = dispatched
+        super().__init__(error_class)
+
+
 class McpFirewallProxy(BaseAdapter):
     """Intercepts and enforces policy on MCP JSON-RPC 2.0 protocol exchanges."""
 
@@ -43,9 +52,15 @@ class McpFirewallProxy(BaseAdapter):
         Process a single JSON-RPC 2.0 message.
         If allowed, invokes forward_handler; otherwise returns a JSON-RPC error.
         """
+        if not isinstance(request_dict, dict):
+            return {"jsonrpc": "2.0", "id": None, "error": {"code": -32600,
+                "message": "Drex rejected an invalid MCP request; nothing was sent upstream."}}
         req_id = request_dict.get("id")
         method = request_dict.get("method", "")
         params = request_dict.get("params", {})
+        if request_dict.get("jsonrpc") != "2.0" or not isinstance(method, str) or not method or not isinstance(params, dict):
+            return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32600,
+                "message": "Drex rejected invalid JSON-RPC fields or params; no action was sent upstream."}}
         if method == "initialize" and isinstance(params, dict):
             info = params.get("clientInfo", {})
             if isinstance(info, dict):
@@ -72,12 +87,15 @@ class McpFirewallProxy(BaseAdapter):
                 return response
             except Exception as exc:
                 return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32603,
-                    "message": f"Drex upstream/protocol failure: {type(exc).__name__}"}}
+                    "message": f"Drex could not read or validate upstream inventory ({type(exc).__name__}); no tool action ran. Check the upstream MCP command and restart the session."}}
 
         # Handle tools/call
         if method == "tools/call":
             tool_name = params.get("name", "unknown_tool")
             tool_args = params.get("arguments", {})
+            if not isinstance(tool_name, str) or not tool_name or not isinstance(tool_args, dict):
+                return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32602,
+                    "message": "Drex rejected invalid tools/call arguments; no policy-approved action was sent upstream."}}
 
             # 1. Normalize and Evaluate through Firewall
             envelope, decision = self.evaluate_action(
@@ -151,18 +169,31 @@ class McpFirewallProxy(BaseAdapter):
                     )
                     return upstream_resp
                 except Exception as e:
+                    dispatched = getattr(e, "dispatched", isinstance(e, TimeoutError))
+                    error_class = getattr(e, "error_class", type(e).__name__)
+                    timed_out = error_class == "TimeoutError"
                     self.record_execution_result(
                         action_id=envelope.action_id,
                         tool="mcp",
-                        executed=False,
-                        error_class=type(e).__name__,
+                        # A timeout happens after the request was written to
+                        # upstream. Its side effects cannot be inferred.
+                        executed=dispatched,
+                        result={"status": "upstream_invoked_outcome_unknown" if dispatched else "not_dispatched"},
+                        error_class=error_class,
                     )
+                    if dispatched:
+                        detail = "Upstream timed out; Drex terminated the upstream process." if timed_out else f"Upstream response failed ({error_class})."
+                        message = (f"{detail} The request was sent and its effect is unknown. Do not retry blindly; "
+                                   "check the upstream state, restart the MCP session, and inspect drex-firewall trace.")
+                    else:
+                        message = (f"Drex could not dispatch the request to upstream ({error_class}); the action was not sent. "
+                                   "Check the upstream command and restart the MCP session. No direct fallback was attempted.")
                     return {
                         "jsonrpc": "2.0",
                         "id": req_id,
                         "error": {
                             "code": -32603,
-                            "message": f"Upstream MCP error: {str(e)}",
+                            "message": message,
                         },
                     }
 
@@ -190,6 +221,9 @@ class McpFirewallProxy(BaseAdapter):
         # Handle resources/read
         if method == "resources/read":
             uri = params.get("uri", "")
+            if not isinstance(uri, str) or not uri:
+                return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32602,
+                    "message": "Drex rejected invalid resources/read arguments; no request was sent upstream."}}
             envelope, decision = self.evaluate_action(
                 tool="mcp",
                 operation="resources/read",
@@ -230,10 +264,10 @@ class McpFirewallProxy(BaseAdapter):
                     return forward_handler(request_dict)
                 except Exception as exc:
                     return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32603,
-                        "message": f"Drex upstream failure: {type(exc).__name__}"}}
+                        "message": f"Drex upstream failed during session setup ({type(exc).__name__}); no tool action was forwarded. Check the upstream MCP command and restart the session."}}
             return {"jsonrpc": "2.0", "id": req_id, "result": {}}
         return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601,
-            "message": "Drex blocked unsupported MCP method"}}
+            "message": f"Drex rejected unsupported MCP method '{method}'; no request was sent upstream."}}
 
     def run_stdio_proxy(self, upstream_cmd: str) -> None:
         """Run continuous stdio proxy wrapping an upstream MCP process."""
@@ -249,24 +283,44 @@ class McpFirewallProxy(BaseAdapter):
         )
 
         def _forward(req: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-            req_line = json.dumps(req) + "\n"
-            proc.stdin.write(req_line)
-            proc.stdin.flush()
-            if "id" not in req:
-                return None
-            timeout = float(os.environ.get("DREX_MCP_UPSTREAM_TIMEOUT", "30"))
-            ready, _, _ = select.select([proc.stdout], [], [], timeout)
-            if not ready:
-                raise TimeoutError("upstream MCP response timed out")
-            resp_line = proc.stdout.readline()
-            if not resp_line:
-                raise RuntimeError("Upstream MCP process terminated unexpectedly")
-            response = json.loads(resp_line.strip())
-            if (not isinstance(response, dict) or response.get("jsonrpc") != "2.0"
-                    or response.get("id") != req.get("id")
-                    or not ("result" in response or "error" in response)):
-                raise ValueError("invalid upstream JSON-RPC response")
-            return response
+            dispatched = False
+            try:
+                req_line = json.dumps(req) + "\n"
+                proc.stdin.write(req_line)
+                proc.stdin.flush()
+                dispatched = True
+                if "id" not in req:
+                    return None
+                timeout = float(os.environ.get("DREX_MCP_UPSTREAM_TIMEOUT", "30"))
+                ready, _, _ = select.select([proc.stdout], [], [], timeout)
+                if not ready:
+                    # The request was sent; terminate the process and never retry.
+                    try:
+                        os.killpg(proc.pid, signal.SIGTERM)
+                        proc.wait(timeout=1)
+                    except (ProcessLookupError, PermissionError, OSError, subprocess.TimeoutExpired):
+                        try:
+                            os.killpg(proc.pid, signal.SIGKILL)
+                        except OSError:
+                            proc.kill()
+                        try:
+                            proc.wait(timeout=1)
+                        except subprocess.TimeoutExpired:
+                            pass
+                    raise TimeoutError("upstream MCP response timed out")
+                resp_line = proc.stdout.readline()
+                if not resp_line:
+                    raise RuntimeError("Upstream MCP process terminated unexpectedly")
+                response = json.loads(resp_line.strip())
+                if (not isinstance(response, dict) or response.get("jsonrpc") != "2.0"
+                        or response.get("id") != req.get("id")
+                        or not ("result" in response or "error" in response)):
+                    raise ValueError("invalid upstream JSON-RPC response")
+                return response
+            except UpstreamForwardError:
+                raise
+            except Exception as exc:
+                raise UpstreamForwardError(type(exc).__name__, dispatched) from None
 
         try:
             for line in sys.stdin:

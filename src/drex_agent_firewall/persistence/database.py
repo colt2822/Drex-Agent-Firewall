@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -95,7 +96,12 @@ CREATE INDEX IF NOT EXISTS idx_sandbox_status ON sandbox_sessions(status);
 
 def init_db(db_path: str = "drex_firewall.db") -> sqlite3.Connection:
     """Initialize SQLite database with WAL mode and create tables if needed."""
+    parent = Path(db_path).expanduser().parent
+    if str(parent) not in {"", "."}:
+        parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     conn = sqlite3.connect(db_path, timeout=30.0, check_same_thread=False)
+    if db_path != ":memory:":
+        os.chmod(db_path, 0o600)
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("PRAGMA synchronous=FULL;")
     conn.execute("PRAGMA busy_timeout=5000;")

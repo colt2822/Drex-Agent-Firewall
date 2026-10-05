@@ -9,6 +9,10 @@ from pydantic import BaseModel, Field
 from drex_agent_firewall.schemas.decision import ActionClass, FinalDecision
 
 
+class ConfigLoadError(ValueError):
+    """A user configuration file is unreadable or invalid."""
+
+
 class ProviderConfig(BaseModel):
     """Configuration for decision providers."""
     type: str = Field(default="replay", description="'drex' or 'replay'")
@@ -171,12 +175,27 @@ class FirewallConfig(BaseModel):
     shell: ShellPolicy = Field(default_factory=ShellPolicy)
     network: NetworkPolicy = Field(default_factory=NetworkPolicy)
     sandbox: SandboxConfig = Field(default_factory=SandboxConfig)
-    database_path: str = "drex_firewall.db"
+    database_path: str = Field(default_factory=lambda: os.environ.get(
+        "DREX_DATABASE_PATH",
+        os.path.join(os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share")), "drex-firewall", "audit.db"),
+    ))
 
     @classmethod
     def load_default(cls) -> "FirewallConfig":
         """Instantiate config with environment variable overrides."""
         cfg = cls()
+        config_root = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~/.config"))
+        policy_path = os.path.join(config_root, "drex-firewall", "policy.yaml")
+        if os.path.exists(policy_path):
+            import yaml
+            try:
+                with open(policy_path, encoding="utf-8") as stream:
+                    policy_data = yaml.safe_load(stream)
+                if not isinstance(policy_data, dict):
+                    raise ValueError("policy root must be a YAML mapping")
+                cfg = cls.model_validate(policy_data)
+            except (OSError, yaml.YAMLError, ValueError) as exc:
+                raise ConfigLoadError(f"Invalid Drex policy at {policy_path}: {type(exc).__name__}") from exc
         api_key = os.environ.get("DREX_API_KEY")
         provider_type = os.environ.get("DREX_PROVIDER_TYPE")
         if provider_type:
