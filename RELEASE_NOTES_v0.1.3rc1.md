@@ -1,19 +1,21 @@
-# v0.1.3rc1 hardening candidate
+# Drex Agent Firewall v0.1.3rc1
 
-Fixes filesystem adapter TOCTOU and hardlink alias access; rejects preexisting
-workspace IPC/device capabilities; pins the Bubblewrap workspace inode; makes the
-synthetic root read-only; requires CPU/memory/PID cgroups and inherited resource
-limits; bounds temporary mounts and egress broker connections; preserves custom
-policy snapshots and rejects stale substitution; records native command receipts;
-and repairs the installed-wheel code mount path and inconsistent version metadata.
+This release candidate consolidates the K3 host-boundary hardening and adds a bounded local MCP alpha path.
 
-The supplied OCI image and mandatory Docker CI attacks validate the outer runtime
-model. OCI commands use disposable PID namespaces, filtered environments, explicit
-mounts, bounded scratch and no network. Nested Bubblewrap has no unrestricted
-fallback. CI installs its actual security prerequisites and rejects critical skips.
+## Included
 
-This is a candidate, not a v0.1.3 release. RT01 aggregate writable-workspace quotas,
-RT02 mandatory native mediation/audit, complete backend/rollback validation and a
-separately launched credential-free model-agent canary remain release blockers.
-See [validation](docs/HARDENING_VALIDATION.md) and the
-[future harness contract](docs/ELYREON_AUTO_INTEGRATION.md).
+- Closes confirmed shell constraint smuggling, execution-environment injection, API exposure, audit text forging, URI path confusion, and broad default-root issues; tightens process-group cleanup, provider failure defaults, and shell egress rules.
+- Pins tests to the source tree under test and records the tested Git HEAD, preventing an older editable installation from silently satisfying or failing the suite.
+- Defines a fail-closed MCP subset: `tools/call` and `resources/read` are policy evaluated and audited; inventory methods are validated and recorded; unsupported methods are rejected.
+- Adds a Claude Code stdio MCP canary fixture and shows CLI audit inspection through `drex-firewall trace`.
+- Documents the local MCP boundary in [SECURITY_BOUNDARY.md](SECURITY_BOUNDARY.md) and the method contract and install flow in [docs/mcp-alpha.md](docs/mcp-alpha.md).
+
+## Verification
+
+- Source-pinned suite: 213 passed, zero failed, zero skipped on the release commit.
+- Clean virtualenv install plus Claude Code 2.1.289 MCP canary: safe fixture call allowed; destructive fixture call blocked; zero blocked calls reached upstream.
+- Measured install through first protected call: 16.369 seconds in this environment.
+
+## Known limits
+
+This build does not automatically mediate arbitrary host shell, filesystem, Git, HTTP, or socket activity. It covers only actions routed through supported Drex paths. Aggregate workspace quotas, complete native path-policy mediation, global/OCI containment, and protection for unknown MCP extensions remain outside this release claim. See the security boundary for details.
