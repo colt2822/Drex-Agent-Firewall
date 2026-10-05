@@ -3,9 +3,8 @@ from pathlib import Path
 import os
 import subprocess
 import sys
-import pytest
-from drex_agent_firewall import DrexFirewall
-from drex_agent_firewall.schemas.config import FirewallConfig
+from importlib.machinery import PathFinder
+from importlib.util import module_from_spec
 
 EXPECTED_REPO_ROOT = Path(__file__).resolve().parents[1]
 EXPECTED_HEAD = subprocess.check_output(
@@ -13,10 +12,25 @@ EXPECTED_HEAD = subprocess.check_output(
 ).strip()
 os.environ["DREX_EXPECTED_REPO_ROOT"] = str(EXPECTED_REPO_ROOT)
 os.environ["DREX_EXPECTED_HEAD"] = EXPECTED_HEAD
-sys.path.insert(0, str(EXPECTED_REPO_ROOT / "src"))
+EXPECTED_SOURCE_ROOT = EXPECTED_REPO_ROOT / "src"
+
+# Editable-install meta finders may point at another checkout even when src is
+# first on sys.path. Remove any preloaded package and load this package through
+# PathFinder with an explicit source search path.
+for module_name in tuple(sys.modules):
+    if module_name == "drex_agent_firewall" or module_name.startswith("drex_agent_firewall."):
+        del sys.modules[module_name]
+spec = PathFinder.find_spec("drex_agent_firewall", [str(EXPECTED_SOURCE_ROOT)])
+if spec is None or spec.loader is None:
+    raise RuntimeError(f"Cannot load Drex source from {EXPECTED_SOURCE_ROOT} (HEAD {EXPECTED_HEAD})")
+drex_module = module_from_spec(spec)
+sys.modules["drex_agent_firewall"] = drex_module
+spec.loader.exec_module(drex_module)
 
 import drex_agent_firewall  # noqa: E402
 import pytest  # noqa: E402
+from drex_agent_firewall import DrexFirewall  # noqa: E402
+from drex_agent_firewall.schemas.config import FirewallConfig  # noqa: E402
 
 IMPORTED_DREX_MODULE_PATH = Path(drex_agent_firewall.__file__).resolve()
 EXPECTED_MODULE_PATH = (EXPECTED_REPO_ROOT / "src/drex_agent_firewall/__init__.py").resolve()
