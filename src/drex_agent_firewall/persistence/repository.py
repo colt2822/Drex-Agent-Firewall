@@ -15,6 +15,17 @@ from drex_agent_firewall.security.redactor import SecretRedactor
 
 
 import threading
+import re
+
+
+def _safe_audit_text(value: Any) -> Any:
+    if isinstance(value, str):
+        return re.sub(r"[\x00-\x1f\x7f]", lambda m: f"\\u{ord(m.group(0)):04x}", value)
+    if isinstance(value, dict):
+        return { _safe_audit_text(k): _safe_audit_text(v) for k, v in value.items() }
+    if isinstance(value, list):
+        return [_safe_audit_text(v) for v in value]
+    return value
 
 
 class ActionRepository:
@@ -34,8 +45,8 @@ class ActionRepository:
     ) -> None:
         """Persist a complete firewall evaluation record."""
         # Sanitize arguments and target before storing
-        clean_args = self.redactor.sanitize(envelope.arguments)
-        clean_target = self.redactor.redact_text(envelope.resource_target)
+        clean_args = _safe_audit_text(self.redactor.sanitize(envelope.arguments))
+        clean_target = _safe_audit_text(self.redactor.redact_text(envelope.resource_target))
 
         drex_eval = decision.drex_evaluation
         dist_json = None
@@ -86,7 +97,7 @@ class ActionRepository:
                     "PROBABILISTIC_DREX" if not decision.hard_policy_triggered else "HARD_INVARIANT",
                     decision.decision.value,
                     1 if decision.allowed else 0,
-                    decision.reason,
+                    _safe_audit_text(decision.reason),
                     1 if decision.hard_policy_triggered else 0,
                     decision.policy_rule,
                     drex_eval.confidence if drex_eval else 1.0,
@@ -372,4 +383,3 @@ class ActionRepository:
             )
             rows = cursor.fetchall()
             return [self._row_to_dict(cursor, r) for r in rows]
-

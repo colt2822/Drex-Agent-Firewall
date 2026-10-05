@@ -158,6 +158,7 @@ class GitAdapter(BaseAdapter):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 env=filter_environment(os.environ),
+                start_new_session=True,
             )
             captured = bounded_communicate(
                 proc,

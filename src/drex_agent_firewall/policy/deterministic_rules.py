@@ -14,10 +14,11 @@ from drex_agent_firewall.normalizers.context_normalizer import SECRET_PATH_KEYWO
 from drex_agent_firewall.schemas.config import FirewallConfig
 from drex_agent_firewall.schemas.decision import FinalDecision
 from drex_agent_firewall.schemas.envelope import ActionEnvelope
-from drex_agent_firewall.security.network_validator import NetworkValidator
+from drex_agent_firewall.security.network_validator import NetworkValidator, parse_ip_flexibly
 from drex_agent_firewall.security.path_validator import PathValidator
 from drex_agent_firewall.security.redactor import SecretRedactor
 from drex_agent_firewall.security.shell_normalizer import ShellNormalizer
+from drex_agent_firewall.security.environment import is_sensitive_environment_name
 
 
 # Prompt injection keywords that must have ZERO privileged effect
@@ -63,6 +64,22 @@ class DeterministicRulesEngine:
         """Check all hard rules. Returns DeterministicRuleResult if a rule triggers, else None."""
 
         # 0. Rule: Null Byte Injection & Fail-Closed Testing Hooks
+        if envelope.tool.lower() == "shell":
+            unsafe_env = [name for name in envelope.metadata.get("env_names", []) if is_sensitive_environment_name(str(name))]
+            if unsafe_env:
+                return DeterministicRuleResult(
+                    triggered=True,
+                    decision=FinalDecision.BLOCK,
+                    rule_name="SHELL_UNSAFE_ENVIRONMENT",
+                    reason="Shell execution requested code-loading, credential, or proxy environment variables",
+                )
+            if envelope.network_access:
+                return DeterministicRuleResult(
+                    triggered=True,
+                    decision=FinalDecision.BLOCK,
+                    rule_name="SHELL_EGRESS_NOT_BROKERED",
+                    reason="Shell network access is blocked because direct shell clients cannot be confined to the DNS-pinning egress broker; use the guarded HTTP adapter",
+                )
         raw_cmd_or_path = str(envelope.arguments.get("command") or envelope.arguments.get("path") or envelope.arguments.get("url") or "")
         if "\0" in raw_cmd_or_path:
             return DeterministicRuleResult(
@@ -269,6 +286,14 @@ class DeterministicRulesEngine:
                             decision=FinalDecision.BLOCK,
                             rule_name="HARD_RULE_BLOCKED_NETWORK_TARGET",
                             reason=reason or f"Destination '{host}' blocked by network/SSRF policy",
+                        )
+                    parsed = urlparse(embedded_url)
+                    if parsed.hostname and parse_ip_flexibly(parsed.hostname) is None:
+                        return DeterministicRuleResult(
+                            triggered=True,
+                            decision=FinalDecision.BLOCK,
+                            rule_name="SHELL_DNS_EGRESS_UNPINNED",
+                            reason="Shell URL hostnames are blocked because shell clients cannot be DNS-pinned; use guarded HTTP egress",
                         )
 
                 # Check local host IPs in curl/commands e.g. curl -s 169.254.169.254

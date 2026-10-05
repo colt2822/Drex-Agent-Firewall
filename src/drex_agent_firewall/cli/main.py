@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from typing import List, Optional
 import click
 from rich.console import Console
@@ -23,7 +24,7 @@ console = Console()
 
 
 @click.group()
-@click.version_option(version="0.1.1")
+@click.version_option(package_name="drex-agent-firewall")
 def cli():
     """Drex Agent Firewall: Policy & Decision Firewall for Autonomous AI Agents."""
     pass
@@ -113,7 +114,7 @@ def shell_cmd(cmd_args: List[str]):
     if result.stdout:
         console.print(result.stdout, end="")
     if result.stderr:
-        console.print(f"[yellow]{result.stderr}[/yellow]", end="", file=sys.stderr)
+        Console(stderr=True).print(f"[yellow]{result.stderr}[/yellow]", end="")
     sys.exit(result.exit_code)
 
 
@@ -141,10 +142,24 @@ def trace_cmd(trace_id: str):
         elif dec == "ALLOW_WITH_CONSTRAINTS":
             style = "blue"
 
+        timestamp = datetime.fromtimestamp(float(act["timestamp"]), timezone.utc).isoformat()
+        arguments = str(act.get("arguments_json") or "{}")
+        constraints = str(act.get("constraints_json") or "{}")
+        execution_result = str(act.get("execution_result") or "none")
+        arguments = arguments if len(arguments) <= 2000 else arguments[:2000] + "... [TRUNCATED]"
+        constraints = constraints if len(constraints) <= 2000 else constraints[:2000] + "... [TRUNCATED]"
+        execution_result = execution_result if len(execution_result) <= 1000 else execution_result[:1000] + "... [TRUNCATED]"
         info = f"""Step {i}: [{style}]{dec}[/{style}] | Tool: {act['tool']}:{act['operation']}
+Time: {timestamp} | Agent/client: {act.get('agent') or 'unknown'}
 Target: {act['normalized_target']}
+Arguments (redacted): {arguments}
 Reason: {act['reason']}
-Type: {'HARD_INVARIANT' if act['hard_policy_triggered'] else 'PROBABILISTIC_DREX'}"""
+Type: {'HARD_INVARIANT' if act['hard_policy_triggered'] else 'PROBABILISTIC_DREX'}
+Provider/model: {act.get('provider') or 'none'} / {act.get('resolved_model') or 'none'}
+Policy latency: {float(act.get('latency_ms') or 0):.2f} ms | Provider latency: {float(act.get('provider_latency_ms') or 0):.2f} ms
+Executed: {'YES' if act.get('executed') else 'NO'} | Error: {act.get('error_class') or 'none'}
+Result: {execution_result}
+Constraints: {constraints}"""
         console.print(Panel(info, title=f"Action {act['action_id'][:8]}", border_style=style))
 
 
@@ -412,13 +427,22 @@ def demo_cmd():
 def serve_cmd(host: str, port: int, policy: Optional[str]):
     """Start FastAPI server with Web UI and REST API."""
     import uvicorn
+    import ipaddress
     from drex_agent_firewall.server.app import create_app
 
     config = None
     if policy:
         config = FirewallConfig.from_pack(policy)
+    try:
+        is_loopback = ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        is_loopback = host.lower() == "localhost"
+    if not is_loopback and not os.environ.get("DREX_API_TOKEN"):
+        raise click.ClickException("DREX_API_TOKEN is required when binding beyond loopback")
     app = create_app(firewall=DrexFirewall(config=config) if config else None)
     console.print(f"[bold green]Starting Drex Agent Firewall server at http://{host}:{port}[/bold green]")
+    if not os.environ.get("DREX_API_TOKEN") and hasattr(app, "state"):
+        console.print(f"[bold yellow]Ephemeral API bearer token (save for this process): {app.state.api_token}[/bold yellow]")
     uvicorn.run(app, host=host, port=port)
 
 
@@ -430,7 +454,7 @@ def mcp_proxy_cmd(upstream: str):
     from drex_agent_firewall.adapters.mcp_proxy import McpFirewallProxy
 
     proxy = McpFirewallProxy(fw.engine, fw.repository, fw.normalizer)
-    console.print(f"[dim]Spawning MCP proxy for upstream command: {upstream}[/dim]", file=sys.stderr)
+    Console(stderr=True).print(f"[dim]Spawning MCP proxy for upstream command: {upstream}[/dim]")
     proxy.run_stdio_proxy(upstream)
 
 

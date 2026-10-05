@@ -36,7 +36,7 @@ class ConfidenceThresholds(BaseModel):
 
 class FailDisposition(BaseModel):
     """Configurable fail-open vs fail-closed behavior by action class during provider error/timeout."""
-    READ: FinalDecision = FinalDecision.ALLOW
+    READ: FinalDecision = FinalDecision.ESCALATE
     WRITE: FinalDecision = FinalDecision.ESCALATE
     DELETE: FinalDecision = FinalDecision.BLOCK
     EXECUTE: FinalDecision = FinalDecision.ESCALATE
@@ -51,7 +51,7 @@ class FailDisposition(BaseModel):
 
 
 class FilesystemPolicy(BaseModel):
-    allowed_roots: List[str] = Field(default_factory=lambda: ["/workspace", "."])
+    allowed_roots: List[str] = Field(default_factory=lambda: ["/workspace"])
     blocked_paths: List[str] = Field(
         default_factory=lambda: [
             "/etc/shadow",
@@ -61,6 +61,11 @@ class FilesystemPolicy(BaseModel):
             "~/.aws",
             "~/.gnupg",
             ".git/config",
+            ".git/hooks",
+            "~/.config",
+            "~/.kube",
+            "~/.bashrc",
+            "~/.zshrc",
         ]
     )
     max_files_changed: int = 50

@@ -53,9 +53,17 @@ _SENSITIVE_MARKERS = (
     "COOKIE",
 )
 
+_EXECUTION_UNSAFE_EXACT = {
+    "PYTHONPATH", "PYTHONHOME", "BASH_ENV", "ENV", "PS4", "PROMPT_COMMAND",
+    "SHELLOPTS", "BASHOPTS", "CDPATH", "IFS", "GIT_SSH_COMMAND",
+    "GIT_TEMPLATE_DIR", "PERL5LIB", "RUBYLIB", "NODE_OPTIONS",
+}
+
 
 def is_sensitive_environment_name(name: str) -> bool:
     normalized = str(name).upper()
+    if normalized.startswith(("LD_", "DYLD_", "GIT_CONFIG_")) or normalized in _EXECUTION_UNSAFE_EXACT:
+        return True
     return (
         normalized in _BLOCKED_EXACT
         or any(normalized.startswith(prefix) for prefix in _BLOCKED_PREFIXES)
@@ -70,5 +78,5 @@ def is_sensitive_environment_name(name: str) -> bool:
 
 
 def filter_environment(values: Mapping[str, str]) -> dict[str, str]:
-    """Copy an environment while removing credential and proxy variables."""
+    """Copy environment values after removing credentials and code-loading controls."""
     return {key: value for key, value in values.items() if not is_sensitive_environment_name(key)}

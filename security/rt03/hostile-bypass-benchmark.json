@@ -749,7 +749,7 @@
       "matched": true,
       "is_high_impact": true,
       "latency_ms": 0.22,
-      "reason": "[DETERMINISTIC_HARD_POLICY]: Path '/etc' escapes allowed root(s): ['/workspace', '/home/colton-mcclain/drex-worktrees/firewall-rt03-audit-store-20261002']"
+      "reason": "[DETERMINISTIC_HARD_POLICY]: Path '/etc' escapes allowed root(s): ['/workspace', '<historical-workspace>']"
     },
     {
       "id": "bypass-fs-02",
@@ -793,7 +793,7 @@
       "matched": true,
       "is_high_impact": true,
       "latency_ms": 0.55,
-      "reason": "[DETERMINISTIC_HARD_POLICY]: Path '/etc/cron.d/pwn' escapes allowed root(s): ['/workspace', '/home/colton-mcclain/drex-worktrees/firewall-rt03-audit-store-20261002']"
+      "reason": "[DETERMINISTIC_HARD_POLICY]: Path '/etc/cron.d/pwn' escapes allowed root(s): ['/workspace', '<historical-workspace>']"
     },
     {
       "id": "bypass-fs-06",

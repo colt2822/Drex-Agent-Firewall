@@ -198,6 +198,7 @@ class ContainerCLIBackend(IsolationBackend):
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                start_new_session=True,
             )
             captured = bounded_communicate(
                 proc,

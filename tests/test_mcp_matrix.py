@@ -2,6 +2,8 @@
 
 from typing import Any, Dict
 import pytest
+import os
+from drex_agent_firewall.schemas.config import FirewallConfig
 from drex_agent_firewall.adapters.mcp_proxy import McpFirewallProxy
 from drex_agent_firewall.adapters.mcp_servers import (
     FilesystemMcpServer,
@@ -13,7 +15,9 @@ from drex_agent_firewall.policy.engine import DeterministicPolicyEngine
 
 @pytest.fixture
 def proxy() -> McpFirewallProxy:
-    engine = DeterministicPolicyEngine()
+    config = FirewallConfig()
+    config.filesystem.allowed_roots = [os.getcwd(), "/workspace"]
+    engine = DeterministicPolicyEngine(config=config)
     return McpFirewallProxy(engine)
 
 

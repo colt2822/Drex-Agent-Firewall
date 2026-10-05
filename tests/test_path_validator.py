@@ -47,3 +47,9 @@ def test_blocked_path_matching(temp_workspace):
     is_safe, canonical, reason = validator.validate_path(str(blocked))
     assert not is_safe
     assert "explicitly blocked" in reason
+
+
+def test_file_uri_is_rejected(temp_workspace):
+    safe, _, reason = PathValidator(allowed_roots=[str(temp_workspace)]).validate_path("file:///etc/passwd", base_dir=str(temp_workspace))
+    assert not safe
+    assert "URI schemes" in reason

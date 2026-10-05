@@ -11,7 +11,7 @@ closure or deployment approval.
 PROJECT=Drex Agent Firewall RT-03 Audit-Store Isolation
 BASE_HEAD=7d06afa873e4c372294879672881a9d4124cc33d
 FINAL_HEAD=retrieve the validated source commit with git rev-parse HEAD
-WORKTREE=/home/colton-mcclain/drex-worktrees/firewall-rt03-audit-store-20261002
+WORKTREE=<historical-workspace>
 BRANCH=security/rt03-audit-store-isolation-20261002
 GIT_STATUS=verified after local commit in final response
 

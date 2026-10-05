@@ -22,6 +22,18 @@ def test_allowed_commands_constraint():
         ConstraintEnforcer.verify_command("git push", constraints)
 
 
+@pytest.mark.parametrize("command", ["ls .; id", "ls$(id)", "ls`id`", "ls\\nid", "ls || id"])
+def test_command_allowlist_rejects_shell_syntax(command):
+    with pytest.raises(ConstraintViolation):
+        ConstraintEnforcer.verify_command(command, Constraints(allowed_commands=["ls"]))
+
+
+def test_command_prefix_matches_executable_not_raw_prefix():
+    with pytest.raises(ConstraintViolation):
+        ConstraintEnforcer.verify_command("git; id", Constraints(command_prefix="git"))
+    ConstraintEnforcer.verify_command("git status --short", Constraints(command_prefix="git"))
+
+
 def test_read_only_constraint():
     constraints = Constraints(read_only=True)
     ConstraintEnforcer.verify_mutation(operation_is_write=False, constraints=constraints)

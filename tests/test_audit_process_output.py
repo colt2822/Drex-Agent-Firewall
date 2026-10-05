@@ -1,6 +1,7 @@
 """Bounded process output collection regression."""
 
 from types import SimpleNamespace
+import os
 
 from drex_agent_firewall.adapters.shell_adapter import ShellAdapter
 from drex_agent_firewall.policy.engine import DeterministicPolicyEngine
@@ -57,3 +58,18 @@ def test_shell_adapter_drains_output_without_unbounded_communicate(monkeypatch):
     assert "[TRUNCATED at 1048576 bytes]" in result.stdout
     assert fake_process.stdout.consumed == total_bytes
     assert len(result.stdout.encode()) < total_bytes
+
+
+def test_no_isolation_destroy_kills_background_process_group(tmp_path):
+    from drex_agent_firewall.sandbox.backend import SandboxSpec
+    from drex_agent_firewall.sandbox.no_isolation import NoIsolationBackend
+    backend = NoIsolationBackend()
+    spec = SandboxSpec(session_id="background-child-test", workspace_path=str(tmp_path))
+    backend.prepare(spec)
+    backend.launch(spec)
+    result = backend.exec(spec.session_id, ["sh", "-c", "sleep 30 >/dev/null 2>&1 &"], timeout=2)
+    assert result.returncode == 0
+    pgids = tuple(backend._sessions[spec.session_id]["pgids"])
+    assert pgids
+    backend.destroy(spec.session_id)
+    assert not backend._sessions

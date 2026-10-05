@@ -40,7 +40,7 @@ def get_safe_local_coding_pack() -> FirewallConfig:
     cfg = FirewallConfig()
     cfg.default_policy = FinalDecision.ESCALATE
     cfg.filesystem = FilesystemPolicy(
-        allowed_roots=["/workspace", "."],
+        allowed_roots=["/workspace"],
         blocked_paths=[
             "/etc/shadow", "/etc/sudoers", "/root", "~/.ssh", "~/.aws",
             "~/.gnupg", ".git/config", ".env", "secrets.json",
@@ -103,7 +103,7 @@ def get_github_contributor_pack() -> FirewallConfig:
     cfg = FirewallConfig()
     cfg.default_policy = FinalDecision.ESCALATE
     cfg.filesystem = FilesystemPolicy(
-        allowed_roots=["/workspace", "."],
+        allowed_roots=["/workspace"],
         blocked_paths=["~/.ssh", "~/.aws", "/etc/shadow", ".git/config", ".env"],
         max_files_changed=50,
         max_bytes_written=10 * 1024 * 1024,
@@ -135,7 +135,7 @@ def get_read_only_research_pack() -> FirewallConfig:
     cfg = FirewallConfig()
     cfg.default_policy = FinalDecision.BLOCK
     cfg.filesystem = FilesystemPolicy(
-        allowed_roots=["/workspace", "."],
+        allowed_roots=["/workspace"],
         blocked_paths=["/etc/shadow", "~/.ssh", "~/.aws", ".env"],
         max_files_changed=0,
         max_bytes_written=0,
@@ -183,7 +183,7 @@ def get_autonomous_ci_pack() -> FirewallConfig:
     cfg = FirewallConfig()
     cfg.default_policy = FinalDecision.BLOCK
     cfg.filesystem = FilesystemPolicy(
-        allowed_roots=["/workspace", "/tmp", "."],
+        allowed_roots=["/workspace", "/tmp"],
         blocked_paths=["/etc/shadow", "/root", "~/.ssh", ".env"],
         max_files_changed=200,
         max_bytes_written=50 * 1024 * 1024,
@@ -224,7 +224,7 @@ def get_production_ops_pack() -> FirewallConfig:
     cfg = FirewallConfig()
     cfg.default_policy = FinalDecision.ESCALATE
     cfg.filesystem = FilesystemPolicy(
-        allowed_roots=["/workspace", "."],
+        allowed_roots=["/workspace"],
         blocked_paths=["/etc", "/root", "~/.ssh", "~/.aws", ".git/config", ".env"],
         max_files_changed=10,
         max_bytes_written=1 * 1024 * 1024,
@@ -279,7 +279,7 @@ def get_paranoid_pack() -> FirewallConfig:
     cfg = FirewallConfig()
     cfg.default_policy = FinalDecision.BLOCK
     cfg.filesystem = FilesystemPolicy(
-        allowed_roots=["/workspace", "."],
+        allowed_roots=["/workspace"],
         blocked_paths=["/etc", "/root", "/var", "/tmp", "~", ".git", ".env"],
         max_files_changed=5,
         max_bytes_written=256 * 1024,
@@ -339,7 +339,10 @@ def get_policy_pack(name: str) -> FirewallConfig:
     factory = POLICY_PACKS.get(clean_name)
     if not factory:
         raise ValueError(f"Unknown policy pack '{name}'. Available: {list(POLICY_PACKS.keys())}")
-    return factory()
+    config = factory()
+    protected = ["~/.config", "~/.kube", "~/.bashrc", "~/.zshrc", ".git/hooks"]
+    config.filesystem.blocked_paths = list(dict.fromkeys(config.filesystem.blocked_paths + protected))
+    return config
 
 
 def list_policy_packs() -> Dict[str, str]:

@@ -5,17 +5,39 @@ from drex_agent_firewall import DrexFirewall
 from drex_agent_firewall.server.app import create_app
 
 
+def _authenticated_client(app):
+    return TestClient(app, headers={"Authorization": f"Bearer {app.state.api_token}"})
+
+
 def test_api_healthz():
-    client = TestClient(create_app())
+    client = _authenticated_client(create_app())
     resp = client.get("/healthz")
     assert resp.status_code == 200
     assert resp.json()["status"] == "healthy"
 
 
+def test_api_bearer_token_protects_routes_except_healthz(monkeypatch, tmp_path):
+    monkeypatch.setenv("DREX_API_TOKEN", "synthetic-test-token")
+    app = create_app(DrexFirewall(database_path=str(tmp_path / "auth.db")))
+    client = TestClient(app)
+    assert client.get("/healthz").status_code == 200
+    assert client.get("/v1/actions").status_code == 401
+    assert client.get("/v1/actions", headers={"Authorization": "Bearer synthetic-test-token"}).status_code == 200
+
+
+def test_api_refuses_non_loopback_bind_without_token(monkeypatch):
+    from click.testing import CliRunner
+    from drex_agent_firewall.cli.main import cli
+    monkeypatch.delenv("DREX_API_TOKEN", raising=False)
+    result = CliRunner().invoke(cli, ["serve", "--host", "0.0.0.0"])
+    assert result.exit_code != 0
+    assert "DREX_API_TOKEN is required" in result.output
+
+
 def test_api_cors_requires_explicit_exact_origin(monkeypatch, tmp_path):
     monkeypatch.setenv("DREX_FIREWALL_CORS_ORIGINS", "https://trusted.example")
     fw = DrexFirewall(database_path=str(tmp_path / "cors.db"))
-    client = TestClient(create_app(firewall=fw))
+    client = _authenticated_client(create_app(firewall=fw))
     attacker = client.get("/healthz", headers={"Origin": "https://attacker.example"})
     trusted = client.get("/healthz", headers={"Origin": "https://trusted.example"})
     assert "access-control-allow-origin" not in attacker.headers
@@ -35,21 +57,21 @@ def test_api_cors_rejects_wildcard_configuration(monkeypatch, tmp_path):
 
 
 def test_api_readyz():
-    client = TestClient(create_app())
+    client = _authenticated_client(create_app())
     resp = client.get("/readyz")
     assert resp.status_code == 200
     assert resp.json()["ready"] is True
 
 
 def test_api_metrics():
-    client = TestClient(create_app())
+    client = _authenticated_client(create_app())
     resp = client.get("/metrics")
     assert resp.status_code == 200
     assert "drex_firewall_decisions_total" in resp.text
 
 
 def test_api_evaluate():
-    client = TestClient(create_app())
+    client = _authenticated_client(create_app())
     payload = {
         "tool": "shell",
         "operation": "execute",
@@ -63,7 +85,7 @@ def test_api_evaluate():
 
 
 def test_api_enforce_blocks_forbidden():
-    client = TestClient(create_app())
+    client = _authenticated_client(create_app())
     payload = {
         "tool": "shell",
         "operation": "execute",
@@ -75,7 +97,7 @@ def test_api_enforce_blocks_forbidden():
 
 def test_api_actions_and_outcome(tmp_path):
     fw = DrexFirewall(database_path=str(tmp_path / "api_test.db"))
-    client = TestClient(create_app(firewall=fw))
+    client = _authenticated_client(create_app(firewall=fw))
 
     # Evaluate
     eval_resp = client.post(
@@ -98,7 +120,7 @@ def test_api_actions_and_outcome(tmp_path):
 
 
 def test_api_policies_simulate():
-    client = TestClient(create_app())
+    client = _authenticated_client(create_app())
     resp = client.post(
         "/v1/policies/simulate",
         json={

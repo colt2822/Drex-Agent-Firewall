@@ -2,10 +2,14 @@
 
 from drex_agent_firewall import DrexFirewall
 from drex_agent_firewall.schemas.decision import FinalDecision
+from pathlib import Path
+from drex_agent_firewall.schemas.config import FirewallConfig
 
 
 def test_killer_demo_sequential_actions(tmp_path):
-    fw = DrexFirewall(database_path=str(tmp_path / "killer_demo.db"))
+    config = FirewallConfig()
+    config.filesystem.allowed_roots = [str(Path.cwd())]
+    fw = DrexFirewall(config=config, database_path=str(tmp_path / "killer_demo.db"))
 
     # Step 1: read README
     dec1 = fw.evaluate(tool="shell", operation="execute", arguments={"command": "cat README.md"})

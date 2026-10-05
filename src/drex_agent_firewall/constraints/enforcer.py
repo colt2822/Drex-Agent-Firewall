@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import shlex
+import shutil
 from typing import List, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -32,20 +34,37 @@ class ConstraintEnforcer:
 
     @staticmethod
     def verify_command(command: str, constraints: Constraints) -> None:
-        """Verify that shell command satisfies allowed prefixes or whitelist."""
+        """Verify constrained commands as a single executable, never as shell text."""
         cmd_clean = command.strip()
-        if constraints.command_prefix:
-            if not cmd_clean.startswith(constraints.command_prefix):
-                raise ConstraintViolation(
-                    f"Command does not start with enforced prefix '{constraints.command_prefix}'"
-                )
-        if constraints.allowed_commands:
-            matched = any(
-                cmd_clean == ac or cmd_clean.startswith(ac + " ")
-                for ac in constraints.allowed_commands
-            )
+        constrained = bool(constraints.command_prefix or constraints.allowed_commands)
+        if constrained:
+            try:
+                argv = shlex.split(cmd_clean, posix=True)
+            except ValueError as exc:
+                raise ConstraintViolation(f"Malformed constrained command: {exc}") from exc
+            if not argv or any(ch in cmd_clean for ch in ";&|><`$\n\r(){}"):
+                raise ConstraintViolation("Shell syntax is forbidden when command constraints are active")
+            executable = shutil.which(argv[0])
+            if executable is None:
+                raise ConstraintViolation(f"Constrained executable not found: {argv[0]}")
+            real_executable = os.path.realpath(executable)
+            allowed = set(constraints.allowed_commands)
+            if constraints.command_prefix:
+                allowed.add(constraints.command_prefix)
+            matched = False
+            for item in allowed:
+                try:
+                    expected = shlex.split(item)
+                except ValueError:
+                    continue
+                if not expected:
+                    continue
+                expected_exe = shutil.which(expected[0])
+                if expected_exe and os.path.realpath(expected_exe) == real_executable and argv[:len(expected)] == expected:
+                    matched = True
             if not matched:
-                raise ConstraintViolation(f"Command not in allowed_commands constraint list: {command}")
+                raise ConstraintViolation(f"Command does not match an allowed executable/argv: {command}")
+            return
 
     @staticmethod
     def verify_network_domain(url_or_host: str, constraints: Constraints) -> str:

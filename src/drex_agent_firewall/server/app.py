@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import os
+import hmac
+import secrets
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit
-from fastapi import FastAPI, HTTPException, Query, Response, status
+from fastapi import FastAPI, HTTPException, Query, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -71,6 +73,18 @@ def create_app(firewall: Optional[DrexFirewall] = None) -> FastAPI:
         version="0.1.1",
         description="A probabilistic policy and decision firewall for autonomous AI agents, powered by Drex.",
     )
+
+    api_token = os.environ.get("DREX_API_TOKEN") or secrets.token_urlsafe(32)
+    app.state.api_token = api_token
+
+    @app.middleware("http")
+    async def require_api_token(request: Request, call_next):
+        if request.url.path != "/healthz":
+            supplied = request.headers.get("authorization", "")
+            supplied = supplied[7:] if supplied.lower().startswith("bearer ") else ""
+            if not hmac.compare_digest(supplied, api_token):
+                return Response(status_code=401, content='{"detail":"Unauthorized"}', media_type="application/json")
+        return await call_next(request)
 
     app.add_middleware(
         CORSMiddleware,

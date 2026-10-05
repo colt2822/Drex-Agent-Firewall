@@ -133,7 +133,7 @@ def test_sandbox_escape_probes(tmp_workspace):
 
 def test_sandbox_api_endpoints(tmp_workspace):
     app = create_app()
-    client = TestClient(app)
+    client = TestClient(app, headers={"Authorization": f"Bearer {app.state.api_token}"})
 
     # 1. /v1/sandbox/status
     res_status = client.get("/v1/sandbox/status")

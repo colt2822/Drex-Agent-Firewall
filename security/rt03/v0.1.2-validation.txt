@@ -1,7 +1,7 @@
 RT-03 v0.1.2 candidate validation
 Date: 2026-10-02
-Interpreter: /usr/bin/python3.12 via /home/colton-mcclain/.local/bin/pytest
-Environment: PYTHONUSERBASE=/home/colton-mcclain/.local; PYTHONPATH=src; isolated HOME=/tmp/drex-fw-rt03-validation-home
+Interpreter: /usr/bin/python3.12 via <HOME>/.local/bin/pytest
+Environment: PYTHONUSERBASE=<HOME>/.local; PYTHONPATH=src; isolated HOME=/tmp/drex-fw-rt03-validation-home
 Execution: sequential; one pytest process at a time; no xdist or -n
 
 OCI configuration:

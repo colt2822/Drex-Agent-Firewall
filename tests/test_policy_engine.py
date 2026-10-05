@@ -21,7 +21,10 @@ def test_benign_read_allows():
 
 
 def test_filesystem_write_returns_constraints():
-    engine = DeterministicPolicyEngine()
+    config = FirewallConfig.load_default()
+    import os
+    config.filesystem.allowed_roots = ["/workspace", os.getcwd()]
+    engine = DeterministicPolicyEngine(config=config)
     normalizer = ContextNormalizer()
     env = normalizer.normalize(
         tool="filesystem",
@@ -46,12 +49,29 @@ def test_fail_disposition_on_provider_error(monkeypatch):
     monkeypatch.setattr(engine.provider, "evaluate", _mock_eval)
 
     normalizer = ContextNormalizer()
-    # Read should fail-open (ALLOW)
+    # Default READ behavior fails closed pending provider recovery.
     env_read = normalizer.normalize(tool="shell", operation="execute", arguments={"command": "cat README.md"})
     dec_read = engine.evaluate(env_read)
-    assert dec_read.decision == FinalDecision.ALLOW
+    assert dec_read.decision == FinalDecision.ESCALATE
 
     # Delete should fail-closed (BLOCK)
     env_del = normalizer.normalize(tool="filesystem", operation="delete", arguments={"path": "data.db"})
     dec_del = engine.evaluate(env_del)
     assert dec_del.decision == FinalDecision.BLOCK
+
+
+def test_default_fail_disposition_and_roots_are_closed():
+    config = FirewallConfig()
+    assert config.fail_disposition.READ == FinalDecision.ESCALATE
+    assert "." not in config.filesystem.allowed_roots
+
+
+def test_shell_dns_name_egress_is_blocked():
+    engine = DeterministicPolicyEngine()
+    env = ContextNormalizer().normalize(
+        tool="shell", operation="execute",
+        arguments={"command": "curl https://169.254.169.254.nip.io/latest/meta-data"},
+    )
+    decision = engine.evaluate(env)
+    assert decision.decision == FinalDecision.BLOCK
+    assert decision.policy_rule in {"SHELL_EGRESS_NOT_BROKERED", "SHELL_DNS_EGRESS_UNPINNED"}

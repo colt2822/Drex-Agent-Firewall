@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import signal
+import shutil
 import subprocess
 import time
 from typing import Any, Dict, List, Optional
@@ -15,6 +17,7 @@ from drex_agent_firewall.sandbox.backend import (
     SandboxStatus,
 )
 from drex_agent_firewall.utils.process_io import bounded_communicate
+from drex_agent_firewall.sandbox.resource_guard import ResourceGuard
 
 
 class NoIsolationBackend(IsolationBackend):
@@ -43,6 +46,9 @@ class NoIsolationBackend(IsolationBackend):
             "spec": spec,
             "status": SandboxStatus.CREATED,
             "pids": set(),
+            "processes": set(),
+            "pgids": set(),
+            "resource_guards": set(),
         }
         return True
 
@@ -95,15 +101,27 @@ class NoIsolationBackend(IsolationBackend):
             exec_env.update(env)
 
         start_t = time.perf_counter()
+        guard = None
         try:
+            guard = ResourceGuard(spec.limits)
+            self._sessions[session_id]["resource_guards"].add(guard)
+            guarded_command = list(command)
+            if guarded_command:
+                resolved = shutil.which(guarded_command[0], path=exec_env.get("PATH"))
+                if resolved:
+                    guarded_command[0] = resolved
             proc = subprocess.Popen(
-                command,
+                guard.wrap(guarded_command, spec.limits),
                 cwd=target_cwd,
                 env=exec_env,
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
+                start_new_session=True,
+                pass_fds=(guard.fd,),
             )
+            self._sessions[session_id]["processes"].add(proc)
+            self._sessions[session_id]["pgids"].add(proc.pid)
             captured = bounded_communicate(
                 proc,
                 input=input,
@@ -130,15 +148,34 @@ class NoIsolationBackend(IsolationBackend):
                 duration_seconds=round(duration, 3),
                 error=str(e),
             )
+        finally:
+            if guard is not None:
+                guard.close()
+                self._sessions.get(session_id, {}).get("resource_guards", set()).discard(guard)
+            if 'proc' in locals():
+                self._sessions.get(session_id, {}).get("processes", set()).discard(proc)
+                try:
+                    os.killpg(proc.pid, 0)
+                except (ProcessLookupError, PermissionError, OSError):
+                    self._sessions.get(session_id, {}).get("pgids", set()).discard(proc.pid)
 
     def stop(self, session_id: str) -> bool:
         if session_id in self._sessions:
+            for guard in tuple(self._sessions[session_id].get("resource_guards", ())):
+                guard.kill()
+            for pgid in tuple(self._sessions[session_id].get("pgids", ())):
+                try:
+                    os.killpg(pgid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError, OSError):
+                    pass
+            self._sessions[session_id].get("pgids", set()).clear()
             self._sessions[session_id]["status"] = SandboxStatus.STOPPED
             return True
         return False
 
     def destroy(self, session_id: str) -> bool:
         if session_id in self._sessions:
+            self.stop(session_id)
             self._sessions.pop(session_id)
             return True
         return False

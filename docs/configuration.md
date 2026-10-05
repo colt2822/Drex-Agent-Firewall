@@ -37,7 +37,7 @@ Configurable per action class when the provider encounters errors or timeouts:
 
 ```yaml
 fail_disposition:
-  READ: ALLOW              # Fail-open with audit warning for read operations
+  READ: ESCALATE           # Default: fail closed when the decision provider is unavailable
   WRITE: ESCALATE          # Escalate write operations
   DELETE: BLOCK            # Fail-closed for destructive operations
   EXECUTE: ESCALATE        # Escalate shell execution

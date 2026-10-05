@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import subprocess
 import threading
+import os
+import signal
 from typing import Optional
 
 
@@ -84,15 +86,20 @@ def bounded_communicate(
         process.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
         timed_out = True
-        process.kill()
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            process.kill()
         process.wait()
 
     writer.join(timeout=1.0)
     for reader in readers:
-        reader.join(timeout=1.0)
+        reader.join(timeout=0.25 if timed_out else 1.0)
+    # Do not close a BufferedReader while another thread is blocked in read();
+    # inherited pipe writers can otherwise hold its internal lock indefinitely.
     for name in ("stdout", "stderr"):
         stream = getattr(process, name, None)
-        if stream is not None:
+        if stream is not None and all(not r.is_alive() for r in readers):
             try:
                 stream.close()
             except OSError:

@@ -100,7 +100,8 @@ def test_destroy_retains_history_and_authorized_inspection(session):
     from click.testing import CliRunner
     from drex_agent_firewall.cli.main import cli
     fw = DrexFirewall(database_path=manager.db_path)
-    api = TestClient(create_app(firewall=fw))
+    app = create_app(firewall=fw)
+    api = TestClient(app, headers={"Authorization": f"Bearer {app.state.api_token}"})
     assert api.get(f"/v1/actions/{action['action_id']}").status_code == 200
     inspected = CliRunner().invoke(cli, ["sandbox", "inspect", sid, "--audit-db", manager.db_path])
     assert inspected.exit_code == 0, inspected.output

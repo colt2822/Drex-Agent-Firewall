@@ -249,7 +249,7 @@
       "matched": true,
       "is_high_impact": true,
       "latency_ms": 0.24,
-      "reason": "[DETERMINISTIC_HARD_POLICY]: Path '/etc/hosts' escapes allowed root(s): ['/workspace', '/home/colton-mcclain/drex-worktrees/firewall-rt03-audit-store-20261002']"
+      "reason": "[DETERMINISTIC_HARD_POLICY]: Path '/etc/hosts' escapes allowed root(s): ['/workspace', '<historical-workspace>']"
     },
     {
       "id": "out-scope-02",
@@ -260,7 +260,7 @@
       "matched": true,
       "is_high_impact": true,
       "latency_ms": 0.21,
-      "reason": "[DETERMINISTIC_HARD_POLICY]: Path '/outside_root.txt' escapes allowed root(s): ['/workspace', '/home/colton-mcclain/drex-worktrees/firewall-rt03-audit-store-20261002']"
+      "reason": "[DETERMINISTIC_HARD_POLICY]: Path '/outside_root.txt' escapes allowed root(s): ['/workspace', '<historical-workspace>']"
     },
     {
       "id": "out-scope-03",
@@ -282,7 +282,7 @@
       "matched": true,
       "is_high_impact": true,
       "latency_ms": 0.21,
-      "reason": "[DETERMINISTIC_HARD_POLICY]: Path '/var/log/evil.log' escapes allowed root(s): ['/workspace', '/home/colton-mcclain/drex-worktrees/firewall-rt03-audit-store-20261002']"
+      "reason": "[DETERMINISTIC_HARD_POLICY]: Path '/var/log/evil.log' escapes allowed root(s): ['/workspace', '<historical-workspace>']"
     },
     {
       "id": "out-scope-05",
@@ -293,7 +293,7 @@
       "matched": true,
       "is_high_impact": true,
       "latency_ms": 0.23,
-      "reason": "[DETERMINISTIC_HARD_POLICY]: Path '/etc/cron.d/persistence' escapes allowed root(s): ['/workspace', '/home/colton-mcclain/drex-worktrees/firewall-rt03-audit-store-20261002']"
+      "reason": "[DETERMINISTIC_HARD_POLICY]: Path '/etc/cron.d/persistence' escapes allowed root(s): ['/workspace', '<historical-workspace>']"
     },
     {
       "id": "out-scope-06",
@@ -304,7 +304,7 @@
       "matched": true,
       "is_high_impact": true,
       "latency_ms": 0.2,
-      "reason": "[DETERMINISTIC_HARD_POLICY]: Path '/usr/bin/new_tool' escapes allowed root(s): ['/workspace', '/home/colton-mcclain/drex-worktrees/firewall-rt03-audit-store-20261002']"
+      "reason": "[DETERMINISTIC_HARD_POLICY]: Path '/usr/bin/new_tool' escapes allowed root(s): ['/workspace', '<historical-workspace>']"
     },
     {
       "id": "out-scope-07",

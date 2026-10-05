@@ -534,6 +534,7 @@ class BubblewrapBackend(IsolationBackend):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 env=clean_launcher_env,
+                start_new_session=True,
             )
             captured = bounded_communicate(
                 proc,
@@ -673,6 +674,7 @@ class BubblewrapBackend(IsolationBackend):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8"},
+                start_new_session=True,
             )
             session_data["pids"].add(proc.pid)
 

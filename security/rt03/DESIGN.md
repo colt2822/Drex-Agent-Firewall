@@ -1,9 +1,9 @@
 # RT-03 pre-implementation boundary and design
 
-REPOSITORY=/home/colton-mcclain/drex-agent-firewall
+REPOSITORY=<HOME>/drex-agent-firewall
 BASE_HEAD=7d06afa873e4c372294879672881a9d4124cc33d
 RELEASE=v0.1.1
-WORKTREE=/home/colton-mcclain/drex-worktrees/firewall-rt03-audit-store-20261002
+WORKTREE=<historical-workspace>
 BRANCH=security/rt03-audit-store-isolation-20261002
 INITIAL_GIT_STATUS=CLEAN
 

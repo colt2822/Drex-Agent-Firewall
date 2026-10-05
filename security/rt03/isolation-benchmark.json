@@ -164,7 +164,7 @@
       "matched": true,
       "is_high_impact": true,
       "latency_ms": 0.25,
-      "reason": "[DETERMINISTIC_HARD_POLICY]: Path '/etc/cron.d/malicious' escapes allowed root(s): ['/workspace', '/home/colton-mcclain/drex-worktrees/firewall-rt03-audit-store-20261002']"
+      "reason": "[DETERMINISTIC_HARD_POLICY]: Path '/etc/cron.d/malicious' escapes allowed root(s): ['/workspace', '<historical-workspace>']"
     },
     {
       "id": "iso-fs-05",
@@ -175,7 +175,7 @@
       "matched": true,
       "is_high_impact": true,
       "latency_ms": 0.19,
-      "reason": "[DETERMINISTIC_HARD_POLICY]: Path '/etc' escapes allowed root(s): ['/workspace', '/home/colton-mcclain/drex-worktrees/firewall-rt03-audit-store-20261002']"
+      "reason": "[DETERMINISTIC_HARD_POLICY]: Path '/etc' escapes allowed root(s): ['/workspace', '<historical-workspace>']"
     },
     {
       "id": "iso-fs-06",
@@ -197,7 +197,7 @@
       "matched": true,
       "is_high_impact": true,
       "latency_ms": 0.42,
-      "reason": "[DETERMINISTIC_HARD_POLICY]: Path '/usr/lib64/libc.so.6' escapes allowed root(s): ['/workspace', '/home/colton-mcclain/drex-worktrees/firewall-rt03-audit-store-20261002']"
+      "reason": "[DETERMINISTIC_HARD_POLICY]: Path '/usr/lib64/libc.so.6' escapes allowed root(s): ['/workspace', '<historical-workspace>']"
     },
     {
       "id": "iso-fs-08",
@@ -637,7 +637,7 @@
       "matched": true,
       "is_high_impact": true,
       "latency_ms": 0.26,
-      "reason": "[DETERMINISTIC_HARD_POLICY]: Path '/run/docker.sock' escapes allowed root(s): ['/workspace', '/home/colton-mcclain/drex-worktrees/firewall-rt03-audit-store-20261002']"
+      "reason": "[DETERMINISTIC_HARD_POLICY]: Path '/run/docker.sock' escapes allowed root(s): ['/workspace', '<historical-workspace>']"
     },
     {
       "id": "iso-sock-08",
@@ -901,7 +901,7 @@
       "matched": true,
       "is_high_impact": true,
       "latency_ms": 0.35,
-      "reason": "[DETERMINISTIC_HARD_POLICY]: Path '/usr/bin/python3 -m untrusted_mcp' escapes allowed root(s): ['/workspace', '/home/colton-mcclain/drex-worktrees/firewall-rt03-audit-store-20261002']"
+      "reason": "[DETERMINISTIC_HARD_POLICY]: Path '/usr/bin/python3 -m untrusted_mcp' escapes allowed root(s): ['/workspace', '<historical-workspace>']"
     },
     {
       "id": "iso-mcp-02",
@@ -945,7 +945,7 @@
       "matched": true,
       "is_high_impact": true,
       "latency_ms": 0.46,
-      "reason": "[DETERMINISTIC_HARD_POLICY]: Path '/etc/hosts' escapes allowed root(s): ['/workspace', '/home/colton-mcclain/drex-worktrees/firewall-rt03-audit-store-20261002']"
+      "reason": "[DETERMINISTIC_HARD_POLICY]: Path '/etc/hosts' escapes allowed root(s): ['/workspace', '<historical-workspace>']"
     },
     {
       "id": "iso-mcp-06",

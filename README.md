@@ -116,7 +116,7 @@ Deterministic rules are designed to block configured forbidden actions before gu
 ```bash
 git clone https://github.com/colt2822/Drex-Agent-Firewall.git
 cd Drex-Agent-Firewall
-pip install -e .
+pipx install .
 ```
 
 ### CLI Quickstart
@@ -376,14 +376,17 @@ drex-firewall benchmark --latency
 
 ## MCP COMPATIBILITY
 
-Verified against standard Model Context Protocol servers:
-- **Filesystem Server**: Blocks traversal, enforces size quotas.
-- **Git/GitHub Server**: Blocks remote force-pushes, prevents secret leaks.
-- **Generic Tool Server**: Full JSON-RPC 2.0 specification compliance.
+The stdio MCP proxy supports a defined subset of JSON-RPC methods. It evaluates and audits `tools/call` and `resources/read` before forwarding. It audits validated inventory from `tools/list`, `resources/list`, and `prompts/list`, but does not filter that metadata. It forwards session setup and rejects unknown methods, including unsupported writes. This is not complete MCP coverage or automatic host mediation; see [SECURITY_BOUNDARY.md](SECURITY_BOUNDARY.md).
 
 Run proxy:
 ```bash
 drex-firewall mcp-proxy --upstream "node /path/to/server.js"
+```
+
+Inspect a policy decision by its action or trace ID:
+
+```bash
+drex-firewall trace ACTION_ID
 ```
 
 ---

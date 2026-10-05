@@ -202,15 +202,17 @@ class ContextNormalizer:
             mcp_tool_name = str(arguments.get("tool_name") or operation)
             resource_target = mcp_tool_name
             op_check = f"{op_lower} {mcp_tool_name.lower()}"
-            if any(k in op_check for k in ["pull_request", "create_pr", "merge", "issue", "comment", "publish"]):
-                external_write = True
-                external_effect = True
-            elif any(k in op_check for k in ["read", "list", "get", "status", "view", "fetch", "search", "check", "diff", "test", "lint", "calc", "math", "format_code"]):
-                read_only = True
-            elif any(k in op_check for k in ["delete", "remove", "unlink"]):
+            op_tokens = set(re.findall(r"[a-z0-9]+", op_check))
+            if op_tokens & {"delete", "remove", "unlink", "destroy", "overwrite", "truncate", "wipe"}:
                 destructive = True
                 filesystem_write = True
-            elif any(k in op_check for k in ["write", "modify", "create", "edit", "update", "format_file"]):
+                reversible = False
+            elif any(k in op_check for k in ["pull_request", "create_pr", "merge", "issue", "comment", "publish"]):
+                external_write = True
+                external_effect = True
+            elif op_tokens & {"read", "list", "get", "status", "view", "fetch", "search", "check", "diff", "test", "lint", "calc", "calculate", "math"}:
+                read_only = True
+            elif op_tokens & {"write", "modify", "create", "edit", "update", "overwrite", "format"}:
                 filesystem_write = True
 
             # Inspect embedded MCP arguments for files, commands, and network URLs
@@ -276,7 +278,7 @@ class ContextNormalizer:
             "git_branch": ctx.get("git_branch"),
             "git_status": ctx.get("git_status"),
             "human_approval_state": ctx.get("human_approval_state"),
-            "metadata": ctx.get("metadata", {}),
+            "metadata": {**ctx.get("metadata", {}), "env_names": ctx.get("env_names", [])},
         }
 
         if trace_id:

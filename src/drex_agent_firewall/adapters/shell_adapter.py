@@ -131,21 +131,25 @@ class ShellAdapter(BaseAdapter):
         max_bytes = decision.constraints.max_output_bytes or (1024 * 1024)
 
         # Prepare sanitized runtime environment
-        exec_env = filter_environment(os.environ)
+        safe_names = {"PATH", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR"}
+        exec_env = {k: v for k, v in filter_environment(os.environ).items() if k in safe_names}
         if env:
-            exec_env.update(filter_environment(env))
+            exec_env.update({k: v for k, v in filter_environment(env).items() if k in safe_names})
+        constrained = bool(decision.constraints.command_prefix or decision.constraints.allowed_commands)
+        argv = __import__("shlex").split(command) if constrained else command
 
         # 4. Guarded Subprocess Execution
         start_t = time.perf_counter()
         try:
             proc = subprocess.Popen(
-                command,
-                shell=True,
+                argv,
+                shell=not constrained,
                 cwd=cwd or os.getcwd(),
                 env=exec_env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 stdin=subprocess.PIPE,
+                start_new_session=True,
             )
 
             captured = bounded_communicate(

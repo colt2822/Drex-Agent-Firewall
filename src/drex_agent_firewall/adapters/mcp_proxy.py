@@ -7,6 +7,10 @@ between MCP clients (Claude Code, OpenHands, Codex) and arbitrary upstream MCP s
 from __future__ import annotations
 
 import json
+import os
+import re
+import select
+import signal
 import subprocess
 import sys
 import threading
@@ -20,11 +24,21 @@ from drex_agent_firewall.schemas.decision import FirewallDecision
 class McpFirewallProxy(BaseAdapter):
     """Intercepts and enforces policy on MCP JSON-RPC 2.0 protocol exchanges."""
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.client_info: Dict[str, str] = {}
+
+    def _agent_id(self) -> str:
+        name = self.client_info.get("name", "MCP client")
+        version = self.client_info.get("version", "")
+        label = f"{name}/{version}" if version else name
+        return re.sub(r"[^A-Za-z0-9._ /-]", "", label)[:120] or "MCP client"
+
     def handle_jsonrpc_message(
         self,
         request_dict: Dict[str, Any],
         forward_handler: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+    ) -> Optional[Dict[str, Any]]:
         """
         Process a single JSON-RPC 2.0 message.
         If allowed, invokes forward_handler; otherwise returns a JSON-RPC error.
@@ -32,12 +46,33 @@ class McpFirewallProxy(BaseAdapter):
         req_id = request_dict.get("id")
         method = request_dict.get("method", "")
         params = request_dict.get("params", {})
+        if method == "initialize" and isinstance(params, dict):
+            info = params.get("clientInfo", {})
+            if isinstance(info, dict):
+                self.client_info = {key: str(info[key])[:80] for key in ("name", "version") if isinstance(info.get(key), (str, int, float))}
 
-        # Handle tools/list and resources/list
-        if method in {"tools/list", "resources/list"}:
-            if forward_handler:
-                return forward_handler(request_dict)
-            return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": []}}
+        # Read-only protocol discovery is forwarded, but its returned inventory
+        # is validated and audited so upstream metadata is never invisible.
+        if method in {"tools/list", "resources/list", "prompts/list"}:
+            try:
+                response = forward_handler(request_dict) if forward_handler else {
+                    "jsonrpc": "2.0", "id": req_id, "result": {method.split("/")[0]: []}}
+                if not isinstance(response, dict) or response.get("jsonrpc") != "2.0" or "error" in response:
+                    raise ValueError("invalid or failed upstream response")
+                result = response.get("result")
+                key = method.split("/")[0]
+                entries = result.get(key, []) if isinstance(result, dict) else None
+                if not isinstance(entries, list):
+                    raise ValueError("invalid inventory metadata")
+                env, decision = self.evaluate_action("mcp", method, {key: entries},
+                    context={"mcp_method": method, "inventory_count": len(entries)}, agent_id=self._agent_id())
+                if self.repository:
+                    self.record_execution_result(env.action_id, "mcp", True,
+                        result={"inventory_count": len(entries)})
+                return response
+            except Exception as exc:
+                return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32603,
+                    "message": f"Drex upstream/protocol failure: {type(exc).__name__}"}}
 
         # Handle tools/call
         if method == "tools/call":
@@ -50,6 +85,7 @@ class McpFirewallProxy(BaseAdapter):
                 operation=tool_name,
                 arguments=tool_args,
                 context={"mcp_method": method, "tool_name": tool_name},
+                agent_id=self._agent_id(),
             )
 
             # 2. Rejection / Blocking
@@ -158,8 +194,10 @@ class McpFirewallProxy(BaseAdapter):
                 tool="mcp",
                 operation="resources/read",
                 arguments={"uri": uri},
+                agent_id=self._agent_id(),
             )
             if not decision.allowed:
+                self.record_execution_result(envelope.action_id, "mcp", False, error_class="FIREWALL_POLICY_BLOCKED")
                 return {
                     "jsonrpc": "2.0",
                     "id": req_id,
@@ -169,13 +207,33 @@ class McpFirewallProxy(BaseAdapter):
                     },
                 }
             if forward_handler:
-                return forward_handler(request_dict)
+                try:
+                    response = forward_handler(request_dict)
+                    if not isinstance(response, dict) or response.get("jsonrpc") != "2.0" or "error" in response:
+                        raise ValueError("invalid or failed upstream response")
+                    self.record_execution_result(envelope.action_id, "mcp", True, result={"status": "read_returned"})
+                    return response
+                except Exception as exc:
+                    self.record_execution_result(envelope.action_id, "mcp", False, error_class=type(exc).__name__)
+                    return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32603,
+                        "message": f"Drex upstream/protocol failure: {type(exc).__name__}"}}
             return {"jsonrpc": "2.0", "id": req_id, "result": {"contents": []}}
 
-        # Default passthrough for initialize, ping, notifications
-        if forward_handler:
-            return forward_handler(request_dict)
-        return {"jsonrpc": "2.0", "id": req_id, "result": {}}
+        # Only defined non-mutating session methods are allowed through. Unknown
+        # methods fail closed because their side effects cannot be classified.
+        if method in {"initialize", "ping", "notifications/initialized", "notifications/cancelled"}:
+            if forward_handler:
+                try:
+                    if method.startswith("notifications/"):
+                        forward_handler(request_dict)
+                        return None
+                    return forward_handler(request_dict)
+                except Exception as exc:
+                    return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32603,
+                        "message": f"Drex upstream failure: {type(exc).__name__}"}}
+            return {"jsonrpc": "2.0", "id": req_id, "result": {}}
+        return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601,
+            "message": "Drex blocked unsupported MCP method"}}
 
     def run_stdio_proxy(self, upstream_cmd: str) -> None:
         """Run continuous stdio proxy wrapping an upstream MCP process."""
@@ -187,16 +245,28 @@ class McpFirewallProxy(BaseAdapter):
             stderr=sys.stderr,
             text=True,
             bufsize=1,
+            start_new_session=True,
         )
 
-        def _forward(req: Dict[str, Any]) -> Dict[str, Any]:
+        def _forward(req: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             req_line = json.dumps(req) + "\n"
             proc.stdin.write(req_line)
             proc.stdin.flush()
+            if "id" not in req:
+                return None
+            timeout = float(os.environ.get("DREX_MCP_UPSTREAM_TIMEOUT", "30"))
+            ready, _, _ = select.select([proc.stdout], [], [], timeout)
+            if not ready:
+                raise TimeoutError("upstream MCP response timed out")
             resp_line = proc.stdout.readline()
             if not resp_line:
                 raise RuntimeError("Upstream MCP process terminated unexpectedly")
-            return json.loads(resp_line.strip())
+            response = json.loads(resp_line.strip())
+            if (not isinstance(response, dict) or response.get("jsonrpc") != "2.0"
+                    or response.get("id") != req.get("id")
+                    or not ("result" in response or "error" in response)):
+                raise ValueError("invalid upstream JSON-RPC response")
+            return response
 
         try:
             for line in sys.stdin:
@@ -206,6 +276,8 @@ class McpFirewallProxy(BaseAdapter):
                 try:
                     req_dict = json.loads(line)
                     resp_dict = self.handle_jsonrpc_message(req_dict, forward_handler=_forward)
+                    if resp_dict is None:
+                        continue
                     sys.stdout.write(json.dumps(resp_dict) + "\n")
                     sys.stdout.flush()
                 except Exception as ex:
@@ -217,4 +289,11 @@ class McpFirewallProxy(BaseAdapter):
                     sys.stdout.write(json.dumps(err_resp) + "\n")
                     sys.stdout.flush()
         finally:
-            proc.terminate()
+            try:
+                os.killpg(proc.pid, signal.SIGTERM)
+                proc.wait(timeout=2)
+            except (ProcessLookupError, PermissionError, OSError, subprocess.TimeoutExpired):
+                try:
+                    os.killpg(proc.pid, signal.SIGKILL)
+                except OSError:
+                    proc.kill()

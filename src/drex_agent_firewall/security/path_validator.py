@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 from typing import List, Optional, Tuple
 import unicodedata
+import re
 from urllib.parse import unquote
 
 
@@ -29,6 +30,8 @@ class PathValidator:
     def normalize_input(self, path_str: str) -> str:
         """Normalize URL encodings, Unicode variations, and check null bytes."""
         target = str(path_str).strip()
+        if re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", target):
+            raise ValueError("URI schemes are not valid filesystem paths")
         if "\0" in target:
             raise ValueError("Null byte detected in path")
 
