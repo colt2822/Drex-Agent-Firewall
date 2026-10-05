@@ -60,16 +60,24 @@ def test_shell_adapter_drains_output_without_unbounded_communicate(monkeypatch):
     assert len(result.stdout.encode()) < total_bytes
 
 
-def test_no_isolation_destroy_kills_background_process_group(tmp_path):
+def test_no_isolation_cleans_background_process_tracking(tmp_path, monkeypatch):
     from drex_agent_firewall.sandbox.backend import SandboxSpec
     from drex_agent_firewall.sandbox.no_isolation import NoIsolationBackend
+    from drex_agent_firewall.sandbox.resource_guard import ResourceGuard
+    killed = []
+    original_kill = ResourceGuard.kill
+    def observed_kill(guard):
+        killed.append(guard.path)
+        original_kill(guard)
+    monkeypatch.setattr(ResourceGuard, "kill", observed_kill)
     backend = NoIsolationBackend()
     spec = SandboxSpec(session_id="background-child-test", workspace_path=str(tmp_path))
     backend.prepare(spec)
     backend.launch(spec)
     result = backend.exec(spec.session_id, ["sh", "-c", "sleep 30 >/dev/null 2>&1 &"], timeout=2)
     assert result.returncode == 0
-    pgids = tuple(backend._sessions[spec.session_id]["pgids"])
-    assert pgids
+    # ResourceGuard closes and kills cgroup descendants before exec returns;
+    # an empty process-group set is therefore a valid, already-clean state.
+    assert killed
     backend.destroy(spec.session_id)
     assert not backend._sessions
