@@ -46,6 +46,7 @@ dev = [
 
 [project.scripts]
 drex-firewall = "drex_agent_firewall.cli.main:cli"
+drex-firewall-canary-server = "drex_agent_firewall.demo.canary_server:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

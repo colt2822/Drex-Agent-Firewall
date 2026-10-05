@@ -67,13 +67,18 @@ def test_claude_undo_refuses_to_remove_user_edited_entry(tmp_path, monkeypatch):
 def test_packaged_canary_allows_safe_blocks_destructive_and_prints_trace(tmp_path, monkeypatch):
     db = tmp_path / "canary-audit.db"
     monkeypatch.setenv("DREX_DATABASE_PATH", str(db))
+    monkeypatch.setenv("DREX_API_KEY", "synthetic-canary-key-never-used")
+    monkeypatch.setenv("DREX_PROVIDER_TYPE", "drex")
     result = CliRunner().invoke(cli, ["canary"])
     assert result.exit_code == 0, result.output
     assert "SAFE CALL -> ALLOW" in result.output
+    assert "SAFE ACTION: read_safe_fixture | decision=ALLOW | executed=yes" in result.output
     assert "SAFE_UPSTREAM_EXECUTIONS=1" in result.output
     assert "DESTRUCTIVE CALL -> BLOCK" in result.output
+    assert "DESTRUCTIVE TEST ACTION: delete_test_workspace | decision=BLOCK | executed=no" in result.output
     assert "BLOCKED_UPSTREAM_EXECUTIONS=0" in result.output
     assert "$ drex-firewall trace" in result.output
+    assert "Execution status: BLOCKED BEFORE UPSTREAM" in result.output
     import sqlite3
     conn = sqlite3.connect(db)
     try:
@@ -82,6 +87,27 @@ def test_packaged_canary_allows_safe_blocks_destructive_and_prints_trace(tmp_pat
         conn.close()
     assert ("read_safe_fixture", "ALLOW", 1) in rows
     assert ("delete_test_workspace", "BLOCK", 0) in rows
+
+
+def test_doctor_reports_pass_and_optional_warnings(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    assert CliRunner().invoke(cli, ["init"]).exit_code == 0
+    result = CliRunner().invoke(cli, ["doctor"])
+    assert result.exit_code == 0, result.output
+    assert "PASS  Operating system:" in result.output
+    assert "PASS  Audit database:" in result.output
+    assert "DOCTOR=PASS_WITH_WARNINGS" in result.output
+
+
+def test_doctor_fails_for_missing_required_claude(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    assert CliRunner().invoke(cli, ["init"]).exit_code == 0
+    monkeypatch.setattr("drex_agent_firewall.cli.main.shutil.which", lambda _command: None)
+    result = CliRunner().invoke(cli, ["doctor", "--claude"])
+    assert result.exit_code != 0
+    assert "FAIL  Claude Code: not found on PATH" in result.output
 
 
 def test_invalid_policy_is_reported_without_starting_upstream(tmp_path, monkeypatch):

@@ -12,6 +12,7 @@ import sys
 import subprocess
 import tempfile
 import time
+import platform
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -70,6 +71,14 @@ def _write_private_json(path: Path, value: dict):
     _write_private_text(path, json.dumps(value, indent=2) + "\n")
 
 
+def _package_subprocess_env() -> dict:
+    """Pin child CLI imports to the package that launched this process."""
+    env = os.environ.copy()
+    package_root = Path(__file__).resolve().parents[2]
+    env["PYTHONPATH"] = str(package_root)
+    return env
+
+
 @cli.command("init")
 @click.option("--force", is_flag=True, help="Replace the Drex config and default policy files.")
 def init_cmd(force: bool):
@@ -98,6 +107,104 @@ def init_cmd(force: bool):
     click.echo(f"DEFAULT_POLICY={policy}")
 
 
+@cli.command("doctor")
+@click.option("--claude", "check_claude", is_flag=True, help="Require Claude Code to be present on PATH.")
+@click.option("--upstream", help="Check that the executable in this MCP command is on PATH.")
+def doctor_cmd(check_claude: bool, upstream: Optional[str]):
+    """Run local installation and configuration preflight checks."""
+    from drex_agent_firewall import __version__
+    config_root, data_root = _roots()
+    checks = []
+
+    def add(label: str, status: str, detail: str):
+        checks.append((label, status, detail))
+
+    add("Operating system", "PASS" if sys.platform.startswith("linux") else "FAIL",
+        f"{platform.system()} {platform.release()} (alpha supports Linux)")
+    add("Python", "PASS" if sys.version_info >= (3, 10) else "FAIL", platform.python_version())
+    add("Drex version", "PASS", __version__)
+    add("Package path", "PASS", str(Path(__file__).resolve()))
+
+    for label, directory in (("Config directory", config_root), ("Data directory", data_root)):
+        try:
+            directory.mkdir(parents=True, exist_ok=True)
+            probe = directory / f".drex-doctor-{os.getpid()}"
+            probe.write_text("ok", encoding="ascii")
+            probe.unlink()
+            add(label, "PASS", f"writable: {directory}")
+        except OSError as exc:
+            add(label, "FAIL", f"not writable ({type(exc).__name__}): {directory}")
+
+    policy = config_root / "policy.yaml"
+    try:
+        FirewallConfig.load_default()
+        if policy.exists():
+            add("Policy config", "PASS", f"valid: {policy}")
+        else:
+            add("Policy config", "WARN", f"not initialized: run 'drex-firewall init' ({policy})")
+    except (ConfigLoadError, OSError, ValueError) as exc:
+        add("Policy config", "FAIL", f"invalid or unreadable ({type(exc).__name__}): {policy}")
+
+    try:
+        fw = DrexFirewall()
+        audit_path = Path(fw.config.database_path).expanduser().resolve()
+        with sqlite3.connect(f"{audit_path.as_uri()}?mode=rw", uri=True) as conn:
+            conn.execute("SELECT 1").fetchone()
+        add("Audit database", "PASS", str(audit_path))
+    except (ConfigLoadError, OSError, sqlite3.Error, ValueError) as exc:
+        add("Audit database", "FAIL", f"not accessible ({type(exc).__name__}); run 'drex-firewall init'")
+
+    claude = shutil.which("claude")
+    if check_claude:
+        add("Claude Code", "PASS" if claude else "FAIL", claude or "not found on PATH")
+    elif claude:
+        add("Claude Code", "PASS", claude)
+    else:
+        add("Claude Code", "WARN", "not found (optional unless configuring Claude)")
+
+    claude_config = Path.home() / ".claude.json"
+    manifest = Path.home() / ".drex-firewall-claude.json"
+    try:
+        claude_data = json.loads(claude_config.read_text(encoding="utf-8")) if claude_config.exists() else {}
+        servers = claude_data.get("mcpServers", {}) if isinstance(claude_data, dict) else None
+        if not isinstance(servers, dict):
+            add("Claude Drex config", "WARN", "unexpected Claude config structure")
+        elif manifest.exists():
+            managed = json.loads(manifest.read_text(encoding="utf-8"))
+            entry = servers.get("drex-alpha")
+            if isinstance(managed, dict) and _entry_digest(entry) == managed.get("installed_entry_sha256"):
+                add("Claude Drex config", "PASS", "managed entry matches undo metadata")
+            else:
+                add("Claude Drex config", "WARN", "managed entry missing or changed; inspect before using/undoing")
+        elif "drex-alpha" in servers:
+            add("Claude Drex config", "WARN", "drex-alpha exists without Drex undo metadata; inspect before configuring")
+        else:
+            add("Claude Drex config", "PASS", "no existing drex-alpha entry")
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        add("Claude Drex config", "WARN", f"could not inspect Claude config ({type(exc).__name__})")
+
+    if upstream:
+        try:
+            argv = shlex.split(upstream)
+            command_path = Path(argv[0]).expanduser() if argv else None
+            found = bool(argv) and (shutil.which(argv[0]) is not None or
+                                    (command_path.is_file() and os.access(command_path, os.X_OK)))
+            add("MCP upstream", "PASS" if found else "FAIL", argv[0] if argv else "empty command")
+        except ValueError:
+            add("MCP upstream", "FAIL", "could not parse command quoting")
+    else:
+        add("MCP upstream", "WARN", "not checked; pass --upstream 'command args' to check")
+
+    for label, status, detail in checks:
+        click.echo(f"{status}  {label}: {detail}")
+    if any(status == "FAIL" for _, status, _ in checks):
+        raise click.exceptions.Exit(1)
+    if any(status == "WARN" for _, status, _ in checks):
+        click.echo("DOCTOR=PASS_WITH_WARNINGS")
+    else:
+        click.echo("DOCTOR=PASS")
+
+
 @cli.command("canary")
 def canary_cmd():
     """Run the harmless ALLOW/BLOCK alpha canary through the real MCP proxy."""
@@ -113,9 +220,13 @@ def canary_cmd():
             {"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {"name": "delete_test_workspace", "arguments": {"path": "/workspace/disposable-fixture"}}},
         ]
         command = [sys.executable, "-c", "from drex_agent_firewall.cli.main import cli; cli()", "mcp-proxy", "--upstream", upstream]
+        canary_env = _package_subprocess_env()
+        canary_env["DREX_PROVIDER_TYPE"] = "replay"
+        canary_env["XDG_CONFIG_HOME"] = str(Path(tmp) / "config")
+        canary_env.pop("DREX_API_KEY", None)
         try:
             result = subprocess.run(command, input="".join(json.dumps(item) + "\n" for item in requests),
-                                    text=True, capture_output=True, timeout=15)
+                                    text=True, capture_output=True, timeout=15, env=canary_env)
             responses = [json.loads(line) for line in result.stdout.splitlines() if line.startswith("{")]
             by_id = {item.get("id"): item for item in responses}
             if result.returncode or 3 not in by_id or 4 not in by_id:
@@ -127,15 +238,18 @@ def canary_cmd():
             calls = counter.read_text(encoding="utf-8").splitlines() if counter.exists() else []
             safe_count = calls.count("read_safe_fixture")
             blocked_count = calls.count("delete_test_workspace")
+            click.echo("SECURITY BOUNDARY: MCP-routed operations only")
+            click.echo(f"SAFE ACTION: read_safe_fixture | decision={'ALLOW' if safe_allowed else 'FAIL'} | executed={'yes' if safe_count == 1 else 'no'}")
             click.echo(f"SAFE CALL -> {'ALLOW' if safe_allowed else 'FAIL'}")
             click.echo(f"SAFE_UPSTREAM_EXECUTIONS={safe_count}")
+            click.echo(f"DESTRUCTIVE TEST ACTION: delete_test_workspace | decision={block_decision or 'FAIL'} | executed={'yes' if blocked_count else 'no'}")
             click.echo(f"DESTRUCTIVE CALL -> {block_decision or 'FAIL'}")
             click.echo(f"BLOCKED_UPSTREAM_EXECUTIONS={blocked_count}")
             if not safe_allowed or safe_count != 1 or block_decision != "BLOCK" or blocked_count != 0:
                 raise click.ClickException("Canary expectations failed. No user files are touched; inspect 'drex-firewall trace'.")
             click.echo("\n$ drex-firewall trace")
             trace = subprocess.run([sys.executable, "-c", "from drex_agent_firewall.cli.main import cli; cli()", "trace", "--limit", "4"],
-                                  text=True, capture_output=True, timeout=10)
+                                  text=True, capture_output=True, timeout=10, env=canary_env)
             click.echo(trace.stdout, nl=False)
             if trace.returncode:
                 click.echo("Trace command failed; the audit database is preserved. Check DREX_DATABASE_PATH.", err=True)
@@ -346,7 +460,11 @@ def trace_cmd(trace_id: Optional[str], limit: int):
         constraints = constraints if len(constraints) <= 2000 else constraints[:2000] + "... [TRUNCATED]"
         execution_result = execution_result if len(execution_result) <= 1000 else execution_result[:1000] + "... [TRUNCATED]"
         if act.get("executed") and "outcome_unknown" in execution_result:
-            execution_status = "UPSTREAM INVOKED; OUTCOME UNKNOWN"
+            execution_status = "UPSTREAM RECEIVED REQUEST; FINAL OUTCOME UNKNOWN"
+        elif not act.get("executed") and "not_dispatched" in execution_result:
+            execution_status = "BLOCKED BEFORE UPSTREAM"
+        elif not act.get("executed") and act.get("error_class") == "FIREWALL_POLICY_BLOCKED":
+            execution_status = "BLOCKED BEFORE UPSTREAM"
         else:
             execution_status = "YES" if act.get("executed") else "NO"
         info = f"""Step {i}: [{style}]{dec}[/{style}] | Tool: {act['tool']}:{act['operation']}

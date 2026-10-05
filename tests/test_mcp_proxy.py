@@ -192,7 +192,7 @@ def test_mcp_audit_records_initialized_client_identity(tmp_path):
     assert firewall.repository.list_actions()[0]["agent"] == "Claude Code/2.1.289"
 
 
-def test_real_subprocess_timeout_kills_upstream_and_proxy_returns_deterministic_errors(tmp_path):
+def test_real_subprocess_timeout_kills_upstream_and_proxy_returns_deterministic_errors(tmp_path, monkeypatch):
     """Exercise the CLI proxy process and a live stdio child that hangs on tools/call."""
     import json
     import os
@@ -251,3 +251,9 @@ def test_real_subprocess_timeout_kills_upstream_and_proxy_returns_deterministic_
     assert audits[0][0] == "TimeoutError"
     assert audits[0][1] == 1  # invocation was sent; the side effect is unknown
     assert result == '{"status": "upstream_invoked_outcome_unknown"}'
+    from click.testing import CliRunner
+    from drex_agent_firewall.cli.main import cli
+    monkeypatch.setenv("DREX_DATABASE_PATH", str(db))
+    trace = CliRunner().invoke(cli, ["trace"])
+    assert trace.exit_code == 0, trace.output
+    assert "UPSTREAM RECEIVED REQUEST; FINAL OUTCOME UNKNOWN" in trace.output
