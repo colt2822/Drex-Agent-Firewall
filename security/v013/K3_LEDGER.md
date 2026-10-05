@@ -5,7 +5,7 @@ Source evidence: `security/REDTEAM_PATCH_REPORT_20261004.md`, hardening branch c
 ```
 K3_STRESS_FINDINGS_TOTAL=11
 POLICY_BYPASSES=2
-SANDBOX_ESCAPES=2
+SANDBOX_ESCAPES=1
 SECRET_EXPOSURE_FAILURES=1
 EGRESS_FAILURES=1
 MCP_FAILURES=0 (no MCP defect counted in the K3 report; alpha MCP gaps separately found)
