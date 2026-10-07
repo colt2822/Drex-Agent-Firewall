@@ -1,4 +1,4 @@
-> v0.1.3rc1 is a hardening candidate, not release-ready. See [current validation and open gates](docs/HARDENING_VALIDATION.md).
+> Drex Agent Firewall v0.1.3. Deterministic policy and bounded capability enforcement for coding agents.
 
 # Drex Agent Firewall
 

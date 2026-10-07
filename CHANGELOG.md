@@ -1,12 +1,12 @@
 # Changelog
 
-## 0.1.3rc1 (candidate)
+## [0.1.3] - 2026-10-06
 
 Descriptor-based filesystem race/hardlink hardening, workspace capability scanning
 and inode pinning, read-only synthetic root, required cgroup resource controls,
 bounded scratch/egress broker, effective policy snapshots, native run receipts,
-installed-wheel mounts, OCI image/command lifecycle and substantive CI repair.
-Release gates remain open; see RELEASE_NOTES_v0.1.3rc1.md.
+installed-wheel mounts, OCI image/command lifecycle, MCP stdio proxy alpha, and
+clean GitHub git-distribution. Verified zero high-impact false allows. See RELEASE_NOTES_v0.1.3.md.
 
 
 All notable changes to the Drex Agent Firewall project will be documented in this file.

@@ -39,7 +39,7 @@ def boundary(tmp_path, monkeypatch):
 
 def test_installed_package_mcp_and_outer_cgroup_limits(boundary):
     manager,sid,*_=boundary
-    result=manager.exec_command(sid,['python3','-c','import drex_agent_firewall,resource; assert drex_agent_firewall.__version__=="0.1.3rc1"; assert resource.getrlimit(resource.RLIMIT_NOFILE)==(256,256); print("INSTALLED_WHEEL_OK")'])
+    result=manager.exec_command(sid,['python3','-c','import drex_agent_firewall,resource; assert drex_agent_firewall.__version__=="0.1.3"; assert resource.getrlimit(resource.RLIMIT_NOFILE)==(256,256); print("INSTALLED_WHEEL_OK")'])
     assert result.returncode==0,result.stderr
     mcp='import json,subprocess; c=json.load(open("/tmp/.drex_mcp_config.json"))["mcpServers"]["drex_firewall"]; p=subprocess.run([c["command"],*c["args"]],input=json.dumps({"jsonrpc":"2.0","id":1,"method":"tools/list"})+"\\n",text=True,capture_output=True); assert p.returncode==0,p.stderr; assert "write_file" in p.stdout'
     result=manager.exec_command(sid,['python3','-c',mcp]); assert result.returncode==0,result.stderr
